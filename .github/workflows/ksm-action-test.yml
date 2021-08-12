@@ -1,0 +1,44 @@
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  ksm-test:
+    runs-on: ubuntu-latest
+    environment:
+      name: prod-eu
+
+    steps:
+
+      - name: Retrieve test secrets from KSM
+        id: ksmsecrets
+        uses: Keeper-Security/ksm-action@master
+        with:
+          hostname: keepersecurity.eu
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            boi3Fak4WP-C_yxujI3owQ password | env:SECRIT
+            boi3Fak4WP-C_yxujI3owQ field:login | out:login
+            boi3Fak4WP-C_yxujI3owQ password | out:OUT_SECRIT2
+#            NDsdWcA5uBvKbWq4NvBC0Q file:mymodule.py | file:/tmp/myflie-mymodule.py
+#            NDsdWcA5uBvKbWq4NvBC0Q custom:passcode | env:mypasscode
+
+
+      # Use the output from the `hello` step
+      - name: Print 'out'
+        run: |
+          echo login=[${{ fromJSON(steps.ksmsecrets.outputs.data).login }}]
+          echo "ALL=${{ join(steps.ksmsecrets.outputs.*, '\n') }}"
+
+      - name: Print 'env'
+        run: |
+          echo "SECRIT=${{ env.SECRIT }}"
+        shell: bash
+
+      - name: Print 'files'
+        run: |
+          pwd
+          cd ~
+          ls -la ~
+          ls -la /tmp

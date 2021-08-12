@@ -1,0 +1,8 @@
+.venv
+venv
+.idea
+*.iml
+.vscode
+*.env
+*config*.json
+.DS_Store

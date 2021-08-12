@@ -1,0 +1,52 @@
+name: 'Keeper Secrets Manager Github Action'
+description: 'A GitHub Action to consume secrets from Keeper'
+inputs:
+
+  keeper-secret-config:
+    description: 'Keeper Secrets Manager configuration json'
+    required: true
+
+  hostname:
+    description: 'Keeper server host name (ex. keepersecurity.au)'
+    required: true
+
+  secrets:
+    description: 'A list of secrets to retrieve from Keeper Vault'
+    required: true
+
+  verify-ssl-certs:
+    description: 'Verify SSL certificate. Default: true'
+    required: false
+    default: 'true'
+
+  unmask-secrets:
+    description: 'Unmask secrets in the logs. Default: false'
+    required: false
+    default: 'false'
+
+outputs:
+  data:
+    description: 'JSON data of the retrieved secrets'
+    value: ${{ steps.run-entry.outputs.data }}
+runs:
+  using: "composite"
+  steps:
+
+    - name: Installing dependencies
+      id: dependencies
+      run: |
+        python3 -m pip install -U setuptools
+        python3 -m pip install -r ${{ github.action_path }}/requirements.txt
+      shell: bash
+
+    - name: Run Entry
+      id: run-entry
+      env:
+        KEEPER_HOSTNAME: ${{ inputs.hostname }}
+        SECRET_CONFIG: ${{ inputs.keeper-secret-config }}
+        VERIFY_SSL_CERTS: ${{ inputs.verify-ssl-certs }}
+        SECRETS: ${{ inputs.secrets }}
+        UNMASK: ${{ inputs.unmask-secrets }}
+      run: |
+        python3 ${{ github.action_path }}/ghaentrypoint.py
+      shell: bash

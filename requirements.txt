@@ -1,0 +1,4 @@
+actions-toolkit
+cryptography>=3.4.6
+keeper-secrets-manager-core==16.1.2
+python-dotenv

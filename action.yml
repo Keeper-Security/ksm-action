@@ -2,10 +2,12 @@ name: 'Keeper Secrets Manager Github Action'
 description: 'A GitHub Action to consume secrets from Keeper'
 author: 'Keeper Security Inc. <sm@keepersecurity.com>'
 inputs:
-  milliseconds: # change this
+  keeper-secret-config:
+    description: 'Keeper Secrets Manager configuration json'
     required: true
-    description: 'input description here'
-    default: 'default value if applicable'
+  secrets:
+    required: true
+    description: 'A list of secrets to retrieve from Keeper Vault'
 runs:
   using: 'node12'
   main: 'dist/index.js'

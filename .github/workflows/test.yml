@@ -22,10 +22,16 @@ jobs:
       - uses: ./
         id: ksm
         with:
-          milliseconds: 1000
+          keeper-secret-config: ${{ secrets.KSM_CONFIG }}
           secrets: |
-            zOVOneDczofWFlfizjC5Qw/field/login > username
-            zOVOneDczofWFlfizjC5Qw/field/password > password
-            zOVOneDczofWFlfizjC5Qw/file/QR code > file:./qr_code.png
+            BediNKCMG21ztm5xGYgNww/field/login > username
+            BediNKCMG21ztm5xGYgNww/field/password > password
+            BediNKCMG21ztm5xGYgNww/file/qr.png > ./qr_code_1.png
+            BediNKCMG21ztm5xGYgNww/field/login > env:USERNAME
+            BediNKCMG21ztm5xGYgNww/field/password > env:PASSWORD
+            BediNKCMG21ztm5xGYgNww/file/qr.png > file:./qr_code_2.png
       - name: Print secrets
-        run: echo ${{ JSON.stringify(steps.ksm.outputs) }}
+        run: |
+          printenv
+          echo ${{ JSON.stringify(steps.ksm.outputs) }}
+

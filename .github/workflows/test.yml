@@ -1,0 +1,31 @@
+name: 'build-test'
+on: # rebuild any PRs and main branch changes
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'releases/*'
+
+jobs:
+  build: # make sure build/ci work properly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: |
+          npm install
+      - run: |
+          npm run all
+  test: # make sure the action works on a clean machine without building
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ./
+        id: ksm
+        with:
+          milliseconds: 1000
+          secrets: |
+            zOVOneDczofWFlfizjC5Qw/field/login > username
+            zOVOneDczofWFlfizjC5Qw/field/password > password
+            zOVOneDczofWFlfizjC5Qw/file/QR code > file:./qr_code.png
+      - name: Print secrets
+        run: echo ${{ JSON.stringify(steps.ksm.outputs) }}

@@ -86,11 +86,11 @@ const downloadSecretFile = (file, destination) => __awaiter(void 0, void 0, void
 const run = () => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const config = core.getInput('keeper-secret-config');
-        core.debug(config);
         const inputs = exports.parseSecretsInputs(core.getMultilineInput('secrets'));
         const secrets = yield secrets_manager_core_1.getSecrets({ storage: secrets_manager_core_1.loadJsonConfig(config) }, exports.getRecordUids(inputs));
         for (const input of inputs) {
             const secret = secrets_manager_core_1.getValue(secrets, input.notation);
+            core.setSecret(secret);
             switch (input.destinationType) {
                 case DestinationType.output:
                     core.setOutput(input.destination, secret);

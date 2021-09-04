@@ -55,11 +55,11 @@ const downloadSecretFile = async (file: KeeperFile, destination: string): Promis
 const run = async (): Promise<void> => {
     try {
         const config = core.getInput('keeper-secret-config')
-        core.debug(config)
         const inputs = parseSecretsInputs(core.getMultilineInput('secrets'))
         const secrets = await getSecrets({storage: loadJsonConfig(config)}, getRecordUids(inputs))
         for (const input of inputs) {
             const secret = getValue(secrets, input.notation)
+            core.setSecret(secret)
             switch (input.destinationType) {
                 case DestinationType.output:
                     core.setOutput(input.destination, secret)

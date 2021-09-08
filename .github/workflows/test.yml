@@ -1,0 +1,37 @@
+name: 'build-test'
+on: # rebuild any PRs and main branch changes
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'releases/*'
+
+jobs:
+  build: # make sure build/ci work properly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: |
+          npm install
+      - run: |
+          npm run all
+  test: # make sure the action works on a clean machine without building
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ./
+        id: ksm
+        with:
+          keeper-secret-config: ${{ secrets.KSM_CONFIG }}
+          secrets: |
+            BediNKCMG21ztm5xGYgNww/field/login > username
+            BediNKCMG21ztm5xGYgNww/field/password > password
+            BediNKCMG21ztm5xGYgNww/file/qr.png > ./qr_code_1.png
+            BediNKCMG21ztm5xGYgNww/field/login > env:USERNAME
+            BediNKCMG21ztm5xGYgNww/field/password > env:PASSWORD
+            BediNKCMG21ztm5xGYgNww/file/qr.png > file:./qr_code_2.png
+      - name: Print secrets
+        run: |
+          printenv
+          echo ${{ JSON.stringify(steps.ksm.outputs) }}
+

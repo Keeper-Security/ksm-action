@@ -588,7 +588,7 @@ exports.toCommandValue = toCommandValue;
 /***/ 13:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-/* Version: 16.0.16 - September 3, 2021 19:26:00 */
+/* Version: 16.1.1 - October 28, 2021 13:41:26 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -606,14 +606,12 @@ function _interopNamespace(e) {
                 var d = Object.getOwnPropertyDescriptor(e, k);
                 Object.defineProperty(n, k, d.get ? d : {
                     enumerable: true,
-                    get: function () {
-                        return e[k];
-                    }
+                    get: function () { return e[k]; }
                 });
             }
         });
     }
-    n['default'] = e;
+    n["default"] = e;
     return Object.freeze(n);
 }
 
@@ -649,7 +647,16 @@ function connectPlatform(p) {
 }
 exports.platform = void 0;
 const loadJsonConfig = (config) => {
-    return inMemoryStorage(JSON.parse(config));
+    let jsonStr = config;
+    try {
+        const str = exports.platform.bytesToString(exports.platform.base64ToBytes(config));
+        if (str.trimStart().startsWith('{') && str.trimEnd().endsWith('}'))
+            jsonStr = str;
+    }
+    catch (e) {
+        jsonStr = config;
+    }
+    return inMemoryStorage(JSON.parse(jsonStr));
 };
 const inMemoryStorage = (storage) => {
     const getValue = (key) => {
@@ -719,6 +726,112 @@ const webSafe64FromBytes = (source) => webSafe64(exports.platform.bytesToBase64(
 // extracts public raw from private key for prime256v1 curve in der/pkcs8
 // privateKey: key.slice(36, 68)
 const privateDerToPublicRaw = (key) => key.slice(-65);
+const b32encode = (base32Text) => {
+    /* encodes a string s to base32 and returns the encoded string */
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    // private static readonly Regex rxBase32Alphabet = new Regex($"", RegexOptions.Compiled);
+    // The padding specified in RFC 3548 section 2.2 is not required and should be omitted.
+    const base32 = (base32Text || '').replace(/=+$/g, '').toUpperCase();
+    if (!base32 || !/^[A-Z2-7]+$/.test(base32))
+        return new Uint8Array();
+    const bytes = Array.from(base32);
+    let output = new Array();
+    for (let bitIndex = 0; bitIndex < base32.length * 5; bitIndex += 8) {
+        const idx = Math.floor(bitIndex / 5);
+        let dualByte = alphabet.indexOf(bytes[idx]) << 10;
+        if (idx + 1 < bytes.length)
+            dualByte |= alphabet.indexOf(bytes[idx + 1]) << 5;
+        if (idx + 2 < bytes.length)
+            dualByte |= alphabet.indexOf(bytes[idx + 2]);
+        dualByte = 0xff & (dualByte >> (15 - bitIndex % 5 - 8));
+        output.push(dualByte);
+    }
+    return new Uint8Array(output);
+};
+const getTotpCode = (url, unixTimeSeconds = 0) => __awaiter(void 0, void 0, void 0, function* () {
+    let totpUrl;
+    try {
+        totpUrl = new URL(url);
+    }
+    catch (e) {
+        return null;
+    }
+    if (totpUrl.protocol != 'otpauth:')
+        return null;
+    const secret = (totpUrl.searchParams.get('secret') || '').trim();
+    if (!secret)
+        return null;
+    let algorithm = (totpUrl.searchParams.get('algorithm') || '').trim();
+    if (!algorithm)
+        algorithm = 'SHA1'; // default algorithm
+    const strDigits = (totpUrl.searchParams.get('digits') || '').trim();
+    let digits = (isNaN(+strDigits) ? 6 : parseInt(strDigits));
+    digits = digits == 0 ? 6 : digits;
+    const strPeriod = (totpUrl.searchParams.get('period') || '').trim();
+    let period = (isNaN(+strPeriod) ? 30 : parseInt(strPeriod));
+    period = period == 0 ? 30 : period;
+    const tmBase = unixTimeSeconds != 0 ? unixTimeSeconds : Math.floor(Date.now() / 1000);
+    const tm = BigInt(Math.floor(tmBase / period));
+    const buffer = new ArrayBuffer(8);
+    new DataView(buffer).setBigInt64(0, tm);
+    const msg = new Uint8Array(buffer);
+    const secretBytes = b32encode(secret.toUpperCase());
+    if (secretBytes == null || secretBytes.length < 1)
+        return null;
+    const digest = yield exports.platform.getHmacDigest(algorithm, secretBytes, msg);
+    if (digest.length < 1)
+        return null;
+    const offset = digest[digest.length - 1] & 0x0f;
+    const codeBytes = new Uint8Array(digest.slice(offset, offset + 4));
+    codeBytes[0] &= 0x7f;
+    let codeInt = new DataView(codeBytes.buffer).getInt32(0);
+    codeInt %= Math.floor(Math.pow(10, digits));
+    codeInt = Math.floor(codeInt);
+    let codeStr = codeInt.toString(10);
+    while (codeStr.length < digits)
+        codeStr = "0" + codeStr;
+    return [codeStr, Math.floor(tmBase % period), period];
+});
+const generatePassword = (length = 64, lowercase = 0, uppercase = 0, digits = 0, specialCharacters = 0) => __awaiter(void 0, void 0, void 0, function* () {
+    const asciiLowercase = 'abcdefghijklmnopqrstuvwxyz';
+    const asciiUppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const asciiDigits = '0123456789';
+    const asciiSpecialCharacters = '"!@#$%()+;<>=?[]{}^.,';
+    length = (typeof length === 'number' && length > 0) ? length : 64;
+    lowercase = (typeof lowercase === 'number' && lowercase > 0) ? lowercase : 0;
+    uppercase = (typeof uppercase === 'number' && uppercase > 0) ? uppercase : 0;
+    digits = (typeof digits === 'number' && digits > 0) ? digits : 0;
+    specialCharacters = (typeof specialCharacters === 'number' && specialCharacters > 0) ? specialCharacters : 0;
+    if (lowercase == 0 && uppercase == 0 && digits == 0 && specialCharacters == 0) {
+        const increment = length / 4;
+        const lastIncrement = increment + length % 4;
+        lowercase = uppercase = digits = increment;
+        specialCharacters = lastIncrement;
+    }
+    let result = '';
+    for (let i = 0; i < lowercase; i++)
+        result += yield exports.platform.getRandomCharacterInCharset(asciiLowercase);
+    for (let i = 0; i < uppercase; i++)
+        result += yield exports.platform.getRandomCharacterInCharset(asciiUppercase);
+    for (let i = 0; i < digits; i++)
+        result += yield exports.platform.getRandomCharacterInCharset(asciiDigits);
+    for (let i = 0; i < specialCharacters; i++)
+        result += yield exports.platform.getRandomCharacterInCharset(asciiSpecialCharacters);
+    // Fisher-Yates shuffle
+    if (result.length > 1) {
+        let a = result.split('');
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = yield exports.platform.getRandomNumber(i + 1); // 0 <= j <= i
+            if (i != j) {
+                const tmp = a[i];
+                a[i] = a[j];
+                a[j] = tmp;
+            }
+        }
+        result = a.join('');
+    }
+    return result;
+});
 
 const bytesToBase64 = (data) => Buffer.from(data).toString('base64');
 const base64ToBytes = (data) => Buffer.from(data, 'base64');
@@ -766,13 +879,22 @@ const exportPublicKey = (keyId, storage) => __awaiter(void 0, void 0, void 0, fu
     const privateKeyDer = yield loadKey(keyId, storage);
     return privateDerToPublicRaw(privateKeyDer);
 });
+const privateDerToPEM = (key) => {
+    const rawPrivate = key.slice(36, 68);
+    const rawPublic = key.slice(-65);
+    const keyData1 = Buffer.of(0x30, 0x77, 0x02, 0x01, 0x01, 0x04, 0x20);
+    const keyData2 = Buffer.of(0xa0, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0xa1, 0x44, 0x03, 0x42, 0x00);
+    return `-----BEGIN EC PRIVATE KEY-----\n${bytesToBase64(Buffer.concat([keyData1, rawPrivate, keyData2, rawPublic]))}\n-----END EC PRIVATE KEY-----`;
+};
 const sign = (data, keyId, storage) => __awaiter(void 0, void 0, void 0, function* () {
     const privateKeyDer = yield loadKey(keyId, storage);
-    const key = crypto.createPrivateKey({
-        key: Buffer.from(privateKeyDer),
-        format: 'der',
-        type: 'pkcs8',
-    });
+    const key = privateDerToPEM(privateKeyDer);
+    // TODO revert to using createPrivateKey when node 10 interop is not needed anymore
+    // const key = createPrivateKey({
+    //     key: Buffer.from(privateKeyDer),
+    //     format: 'der',
+    //     type: 'pkcs8',
+    // })
     const sign = crypto.createSign('SHA256');
     sign.update(data);
     const sig = sign.sign(key);
@@ -878,6 +1000,32 @@ const cleanKeyCache = () => {
         delete keyCache[key];
     }
 };
+const getHmacDigest = (algorithm, secret, message) => __awaiter(void 0, void 0, void 0, function* () {
+    // although once part of Google Key Uri Format - https://github.com/google/google-authenticator/wiki/Key-Uri-Format/_history
+    // removed MD5 as unreliable - only digests of length >= 20 can be used (MD5 has a digest length of 16)
+    let digest = new Uint8Array();
+    const algo = algorithm.toUpperCase().trim();
+    if (['SHA1', 'SHA256', 'SHA512'].includes(algo))
+        digest = crypto.createHmac(algo, secret).update(message).digest();
+    return Promise.resolve(digest);
+});
+// Returns a sufficiently random number in the range [0, max) i.e. 0 <= number < max
+const getRandomNumber = (n) => __awaiter(void 0, void 0, void 0, function* () {
+    const uint32Max = Math.pow(2, 32) - 1;
+    const limit = uint32Max - uint32Max % n;
+    let values = new Uint32Array(1);
+    do {
+        const randomBytes = getRandomBytes(4);
+        values = new Uint32Array(randomBytes.buffer);
+    } while (values[0] > limit);
+    return Promise.resolve(values[0] % n);
+});
+// Given a character set, this function will return one sufficiently random character from the charset.
+const getRandomCharacterInCharset = (charset) => __awaiter(void 0, void 0, void 0, function* () {
+    const count = charset.length;
+    const pos = yield getRandomNumber(count);
+    return Promise.resolve(charset[pos]);
+});
 const nodePlatform = {
     bytesToBase64: bytesToBase64,
     base64ToBytes: base64ToBytes,
@@ -897,10 +1045,13 @@ const nodePlatform = {
     sign: sign,
     get: get,
     post: post,
-    cleanKeyCache: cleanKeyCache
+    cleanKeyCache: cleanKeyCache,
+    getHmacDigest: getHmacDigest,
+    getRandomNumber: getRandomNumber,
+    getRandomCharacterInCharset: getRandomCharacterInCharset
 };
 
-let packageVersion = '16.0.16';
+let packageVersion = '16.1.1';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
@@ -1083,7 +1234,27 @@ const getClientId = (clientKey) => __awaiter(void 0, void 0, void 0, function* (
     const clientKeyHash = yield exports.platform.hash(webSafe64ToBytes(clientKey), CLIENT_ID_HASH_TAG);
     return exports.platform.bytesToBase64(clientKeyHash);
 });
-const initializeStorage = (storage, clientKey, hostName) => __awaiter(void 0, void 0, void 0, function* () {
+const initializeStorage = (storage, oneTimeToken, hostName) => __awaiter(void 0, void 0, void 0, function* () {
+    const tokenParts = oneTimeToken.split(':');
+    let host, clientKey;
+    if (tokenParts.length === 1) {
+        if (!hostName) {
+            throw new Error('The hostname must be present in the token or as a parameter');
+        }
+        host = hostName;
+        clientKey = oneTimeToken;
+    }
+    else {
+        host = {
+            US: 'keepersecurity.com',
+            EU: 'keepersecurity.eu',
+            AU: 'keepersecurity.com.au'
+        }[tokenParts[0].toUpperCase()];
+        if (!host) {
+            host = tokenParts[0];
+        }
+        clientKey = tokenParts[1];
+    }
     const clientKeyBytes = webSafe64ToBytes(clientKey);
     const clientKeyHash = yield exports.platform.hash(clientKeyBytes, CLIENT_ID_HASH_TAG);
     const clientId = exports.platform.bytesToBase64(clientKeyHash);
@@ -1094,7 +1265,7 @@ const initializeStorage = (storage, clientKey, hostName) => __awaiter(void 0, vo
         }
         throw new Error(`The storage is already initialized with a different client Id (${existingClientId})`);
     }
-    yield storage.saveString(KEY_HOSTNAME, hostName);
+    yield storage.saveString(KEY_HOSTNAME, host);
     yield storage.saveString(KEY_CLIENT_ID, clientId);
     yield exports.platform.importKey(KEY_CLIENT_KEY, clientKeyBytes, storage);
     yield exports.platform.generatePrivateKey(KEY_PRIVATE_KEY, storage);
@@ -1267,9 +1438,11 @@ exports.cachingPostFunction = cachingPostFunction;
 exports.connectPlatform = connectPlatform;
 exports.downloadFile = downloadFile;
 exports.downloadThumbnail = downloadThumbnail;
+exports.generatePassword = generatePassword;
 exports.generateTransmissionKey = generateTransmissionKey;
 exports.getClientId = getClientId;
 exports.getSecrets = getSecrets;
+exports.getTotpCode = getTotpCode;
 exports.getValue = getValue;
 exports.inMemoryStorage = inMemoryStorage;
 exports.initialize = initialize;

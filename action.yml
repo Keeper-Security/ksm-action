@@ -3,7 +3,7 @@ description: 'A GitHub Action to consume secrets from Keeper'
 author: 'Keeper Security Inc. <sm@keepersecurity.com>'
 inputs:
   keeper-secret-config:
-    description: 'Keeper Secrets Manager configuration json'
+    description: 'Keeper Secrets Manager configuration json or base64 string'
     required: true
   secrets:
     required: true

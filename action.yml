@@ -13,5 +13,5 @@ runs:
   main: 'dist/index.js'
 
 branding:
-  icon: codesandbox
+  icon: shield
   color: yellow

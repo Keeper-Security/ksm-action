@@ -17,7 +17,7 @@ type SecretsInput = {
 export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
     const results: SecretsInput[] = []
     for (const input of inputs) {
-        const inputParts = input.replace(/\s/g, '').split('>')
+        const inputParts = input.split(/\s*>\s*/)
         let destinationType: DestinationType = DestinationType.output
         let destination = inputParts[1]
         if (destination.startsWith('env:')) {
@@ -73,7 +73,12 @@ const run = async (): Promise<void> => {
             }
         }
     } catch (error) {
-        core.setFailed(error.message)
+        let errorMessage = 'Failed getting secrets from Keeper Secrets Manager'
+        if (error instanceof Error) {
+            errorMessage = error.message
+        }
+
+        core.setFailed(errorMessage)
     }
 }
 

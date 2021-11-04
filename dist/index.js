@@ -48,7 +48,7 @@ var DestinationType;
 const parseSecretsInputs = (inputs) => {
     const results = [];
     for (const input of inputs) {
-        const inputParts = input.replace(/\s/g, '').split('>');
+        const inputParts = input.split(/\s*>\s*/);
         let destinationType = DestinationType.output;
         let destination = inputParts[1];
         if (destination.startsWith('env:')) {
@@ -105,7 +105,11 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         }
     }
     catch (error) {
-        core.setFailed(error.message);
+        let errorMessage = 'Failed getting secrets from Keeper Secrets Manager';
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        }
+        core.setFailed(errorMessage);
     }
 });
 run();

@@ -18,7 +18,7 @@ jobs:
   test: # make sure the action works on a clean machine without building
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@master
       - uses: ./
         id: ksm
         with:
@@ -32,6 +32,5 @@ jobs:
             BediNKCMG21ztm5xGYgNww/file/qr.png > file:./qr_code_2.png
       - name: Print secrets
         run: |
-          printenv
-          echo ${{ JSON.stringify(steps.ksm.outputs) }}
+          echo "Username is ${{ steps.ksm.outputs.username }}"
 

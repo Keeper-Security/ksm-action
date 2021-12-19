@@ -37,7 +37,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getRecordUids = exports.parseSecretsInputs = void 0;
 const core = __importStar(__nccwpck_require__(186));
-const fs = __importStar(__nccwpck_require__(747));
+const fs = __importStar(__nccwpck_require__(147));
 const secrets_manager_core_1 = __nccwpck_require__(13);
 var DestinationType;
 (function (DestinationType) {
@@ -80,16 +80,16 @@ const getRecordUids = (inputs) => {
 };
 exports.getRecordUids = getRecordUids;
 const downloadSecretFile = (file, destination) => __awaiter(void 0, void 0, void 0, function* () {
-    const fileData = yield secrets_manager_core_1.downloadFile(file);
+    const fileData = yield (0, secrets_manager_core_1.downloadFile)(file);
     fs.writeFileSync(destination, fileData);
 });
 const run = () => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const config = core.getInput('keeper-secret-config');
-        const inputs = exports.parseSecretsInputs(core.getMultilineInput('secrets'));
-        const secrets = yield secrets_manager_core_1.getSecrets({ storage: secrets_manager_core_1.loadJsonConfig(config) }, exports.getRecordUids(inputs));
+        const inputs = (0, exports.parseSecretsInputs)(core.getMultilineInput('secrets'));
+        const secrets = yield (0, secrets_manager_core_1.getSecrets)({ storage: (0, secrets_manager_core_1.loadJsonConfig)(config) }, (0, exports.getRecordUids)(inputs));
         for (const input of inputs) {
-            const secret = secrets_manager_core_1.getValue(secrets, input.notation);
+            const secret = (0, secrets_manager_core_1.getValue)(secrets, input.notation);
             core.setSecret(secret);
             switch (input.destinationType) {
                 case DestinationType.output:
@@ -143,7 +143,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.issue = exports.issueCommand = void 0;
-const os = __importStar(__nccwpck_require__(87));
+const os = __importStar(__nccwpck_require__(37));
 const utils_1 = __nccwpck_require__(278);
 /**
  * Commands
@@ -254,8 +254,8 @@ exports.getIDToken = exports.getState = exports.saveState = exports.group = expo
 const command_1 = __nccwpck_require__(351);
 const file_command_1 = __nccwpck_require__(717);
 const utils_1 = __nccwpck_require__(278);
-const os = __importStar(__nccwpck_require__(87));
-const path = __importStar(__nccwpck_require__(622));
+const os = __importStar(__nccwpck_require__(37));
+const path = __importStar(__nccwpck_require__(17));
 const oidc_utils_1 = __nccwpck_require__(41);
 /**
  * The code to exit an action
@@ -564,8 +564,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.issueCommand = void 0;
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const fs = __importStar(__nccwpck_require__(747));
-const os = __importStar(__nccwpck_require__(87));
+const fs = __importStar(__nccwpck_require__(147));
+const os = __importStar(__nccwpck_require__(37));
 const utils_1 = __nccwpck_require__(278);
 function issueCommand(command, message) {
     const filePath = process.env[`GITHUB_${command}`];
@@ -787,8 +787,8 @@ exports.PersonalAccessTokenCredentialHandler = PersonalAccessTokenCredentialHand
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const http = __nccwpck_require__(605);
-const https = __nccwpck_require__(211);
+const http = __nccwpck_require__(685);
+const https = __nccwpck_require__(687);
 const pm = __nccwpck_require__(443);
 let tunnel;
 var HttpCodes;
@@ -1395,14 +1395,14 @@ exports.checkBypass = checkBypass;
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 16.1.1 - October 28, 2021 13:41:26 */
+/* Version: 16.1.2 - November 15, 2021 23:39:39 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var https = __nccwpck_require__(211);
-var crypto = __nccwpck_require__(417);
-var fs = __nccwpck_require__(747);
+var https = __nccwpck_require__(687);
+var crypto = __nccwpck_require__(113);
+var fs = __nccwpck_require__(147);
 
 function _interopNamespace(e) {
     if (e && e.__esModule) return e;
@@ -1597,7 +1597,9 @@ const getTotpCode = (url, unixTimeSeconds = 0) => __awaiter(void 0, void 0, void
     let codeStr = codeInt.toString(10);
     while (codeStr.length < digits)
         codeStr = "0" + codeStr;
-    return [codeStr, Math.floor(tmBase % period), period];
+    const elapsed = Math.floor(tmBase % period); // time elapsed in current period in seconds
+    const ttl = period - elapsed; // time to live in seconds
+    return { code: codeStr, timeLeft: ttl, period: period };
 });
 const generatePassword = (length = 64, lowercase = 0, uppercase = 0, digits = 0, specialCharacters = 0) => __awaiter(void 0, void 0, void 0, function* () {
     const asciiLowercase = 'abcdefghijklmnopqrstuvwxyz';
@@ -1858,7 +1860,7 @@ const nodePlatform = {
     getRandomCharacterInCharset: getRandomCharacterInCharset
 };
 
-let packageVersion = '16.1.1';
+let packageVersion = '16.1.2';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
@@ -2276,13 +2278,13 @@ module.exports = __nccwpck_require__(219);
 "use strict";
 
 
-var net = __nccwpck_require__(631);
-var tls = __nccwpck_require__(16);
-var http = __nccwpck_require__(605);
-var https = __nccwpck_require__(211);
-var events = __nccwpck_require__(614);
-var assert = __nccwpck_require__(357);
-var util = __nccwpck_require__(669);
+var net = __nccwpck_require__(808);
+var tls = __nccwpck_require__(404);
+var http = __nccwpck_require__(685);
+var https = __nccwpck_require__(687);
+var events = __nccwpck_require__(361);
+var assert = __nccwpck_require__(491);
+var util = __nccwpck_require__(837);
 
 
 exports.httpOverHttp = httpOverHttp;
@@ -2542,7 +2544,7 @@ exports.debug = debug; // for test
 
 /***/ }),
 
-/***/ 357:
+/***/ 491:
 /***/ ((module) => {
 
 "use strict";
@@ -2550,7 +2552,7 @@ module.exports = require("assert");
 
 /***/ }),
 
-/***/ 417:
+/***/ 113:
 /***/ ((module) => {
 
 "use strict";
@@ -2558,7 +2560,7 @@ module.exports = require("crypto");
 
 /***/ }),
 
-/***/ 614:
+/***/ 361:
 /***/ ((module) => {
 
 "use strict";
@@ -2566,7 +2568,7 @@ module.exports = require("events");
 
 /***/ }),
 
-/***/ 747:
+/***/ 147:
 /***/ ((module) => {
 
 "use strict";
@@ -2574,7 +2576,7 @@ module.exports = require("fs");
 
 /***/ }),
 
-/***/ 605:
+/***/ 685:
 /***/ ((module) => {
 
 "use strict";
@@ -2582,7 +2584,7 @@ module.exports = require("http");
 
 /***/ }),
 
-/***/ 211:
+/***/ 687:
 /***/ ((module) => {
 
 "use strict";
@@ -2590,7 +2592,7 @@ module.exports = require("https");
 
 /***/ }),
 
-/***/ 631:
+/***/ 808:
 /***/ ((module) => {
 
 "use strict";
@@ -2598,7 +2600,7 @@ module.exports = require("net");
 
 /***/ }),
 
-/***/ 87:
+/***/ 37:
 /***/ ((module) => {
 
 "use strict";
@@ -2606,7 +2608,7 @@ module.exports = require("os");
 
 /***/ }),
 
-/***/ 622:
+/***/ 17:
 /***/ ((module) => {
 
 "use strict";
@@ -2614,7 +2616,7 @@ module.exports = require("path");
 
 /***/ }),
 
-/***/ 16:
+/***/ 404:
 /***/ ((module) => {
 
 "use strict";
@@ -2622,7 +2624,7 @@ module.exports = require("tls");
 
 /***/ }),
 
-/***/ 669:
+/***/ 837:
 /***/ ((module) => {
 
 "use strict";

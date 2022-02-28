@@ -22,14 +22,14 @@ jobs:
       - uses: ./
         id: ksm
         with:
-          keeper-secret-config: ${{ secrets.KSM_CONFIG }}
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
           secrets: |
-            BediNKCMG21ztm5xGYgNww/field/login > username
-            BediNKCMG21ztm5xGYgNww/field/password > password
-            BediNKCMG21ztm5xGYgNww/file/qr.png > ./qr_code_1.png
-            BediNKCMG21ztm5xGYgNww/field/login > env:USERNAME
-            BediNKCMG21ztm5xGYgNww/field/password > env:PASSWORD
-            BediNKCMG21ztm5xGYgNww/file/qr.png > file:./qr_code_2.png
+            b7K1o8Fwoot8bryzH6pZJg/field/login > username
+            b7K1o8Fwoot8bryzH6pZJg/field/password > password
+            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > ./ch1.txt
+            b7K1o8Fwoot8bryzH6pZJg/field/login > env:USERNAME
+            b7K1o8Fwoot8bryzH6pZJg/field/password > env:PASSWORD
+            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch1.txt
       - name: Print secrets
         run: |
           echo "Username is ${{ steps.ksm.outputs.username }}"

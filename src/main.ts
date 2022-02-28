@@ -1,6 +1,6 @@
 import * as core from '@actions/core'
 import * as fs from 'fs'
-import {downloadFile, getSecrets, getValue, KeeperFile, loadJsonConfig} from '@keeper-security/secrets-manager-core'
+import {KeeperFile, downloadFile, getSecrets, getValue, loadJsonConfig} from '@keeper-security/secrets-manager-core'
 
 enum DestinationType {
     output,

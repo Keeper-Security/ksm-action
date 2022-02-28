@@ -36,7 +36,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 @keeper-security/secrets-manager-core
-ISC
+MIT
 
 tunnel
 MIT

@@ -1395,7 +1395,7 @@ exports.checkBypass = checkBypass;
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 16.1.2 - November 15, 2021 23:39:39 */
+/* Version: 16.2.3 - February 9, 2022 23:47:55 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -1809,6 +1809,9 @@ const cleanKeyCache = () => {
         delete keyCache[key];
     }
 };
+const hasKeysCached = () => {
+    return Object.keys(keyCache).length > 0;
+};
 const getHmacDigest = (algorithm, secret, message) => __awaiter(void 0, void 0, void 0, function* () {
     // although once part of Google Key Uri Format - https://github.com/google/google-authenticator/wiki/Key-Uri-Format/_history
     // removed MD5 as unreliable - only digests of length >= 20 can be used (MD5 has a digest length of 16)
@@ -1855,17 +1858,19 @@ const nodePlatform = {
     get: get,
     post: post,
     cleanKeyCache: cleanKeyCache,
+    hasKeysCached: hasKeysCached,
     getHmacDigest: getHmacDigest,
     getRandomNumber: getRandomNumber,
     getRandomCharacterInCharset: getRandomCharacterInCharset
 };
 
-let packageVersion = '16.1.2';
+let packageVersion = '16.2.3';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
 const KEY_CLIENT_KEY = 'clientKey'; // The key that is used to identify the client before public key
 const KEY_APP_KEY = 'appKey'; // The application key with which all secrets are encrypted
+const KEY_OWNER_PUBLIC_KEY = 'appOwnerPublicKey'; // The application owner public key, to create records
 const KEY_PRIVATE_KEY = 'privateKey'; // The client's private key
 const CLIENT_ID_HASH_TAG = 'KEEPER_SECRETS_MANAGER_CLIENT_ID'; // Tag for hashing the client key to client id
 let keeperPublicKeys;
@@ -1925,6 +1930,31 @@ const prepareUpdatePayload = (storage, record) => __awaiter(void 0, void 0, void
         revision: record.revision
     };
 });
+const prepareCreatePayload = (storage, folderUid, recordData) => __awaiter(void 0, void 0, void 0, function* () {
+    const clientId = yield storage.getString(KEY_CLIENT_ID);
+    if (!clientId) {
+        throw new Error('Client Id is missing from the configuration');
+    }
+    const ownerPublicKey = yield storage.getBytes(KEY_OWNER_PUBLIC_KEY);
+    if (!ownerPublicKey) {
+        throw new Error('Application owner public key is missing from the configuration');
+    }
+    const recordBytes = exports.platform.stringToBytes(JSON.stringify(recordData));
+    const recordKey = exports.platform.getRandomBytes(32);
+    const recordUid = exports.platform.getRandomBytes(16);
+    const encryptedRecord = yield exports.platform.encryptWithKey(recordBytes, recordKey);
+    const encryptedRecordKey = yield exports.platform.publicEncrypt(recordKey, ownerPublicKey);
+    const encryptedFolderKey = yield exports.platform.encrypt(recordKey, folderUid);
+    return {
+        clientVersion: 'ms' + packageVersion,
+        clientId: clientId,
+        recordUid: webSafe64FromBytes(recordUid),
+        recordKey: exports.platform.bytesToBase64(encryptedRecordKey),
+        folderUid: folderUid,
+        folderKey: exports.platform.bytesToBase64(encryptedFolderKey),
+        data: webSafe64FromBytes(encryptedRecord)
+    };
+});
 const postFunction = (url, transmissionKey, payload, allowUnverifiedCertificate) => __awaiter(void 0, void 0, void 0, function* () {
     return exports.platform.post(url, payload.payload, {
         PublicKeyId: transmissionKey.publicKeyId.toString(),
@@ -1965,15 +1995,21 @@ const postQuery = (options, path, payload) => __awaiter(void 0, void 0, void 0, 
         const encryptedPayload = yield encryptAndSignPayload(options.storage, transmissionKey, payload);
         const response = yield (options.queryFunction || postFunction)(url, transmissionKey, encryptedPayload, options.allowUnverifiedCertificate);
         if (response.statusCode !== 200) {
-            const errorMessage = exports.platform.bytesToString(response.data.slice(0, 1000));
-            try {
-                const errorObj = JSON.parse(errorMessage);
-                if (errorObj.error === 'key') {
-                    yield options.storage.saveString(KEY_SERVER_PUBIC_KEY_ID, errorObj.key_id.toString());
-                    continue;
+            let errorMessage;
+            if (response.data) {
+                errorMessage = exports.platform.bytesToString(response.data.slice(0, 1000));
+                try {
+                    const errorObj = JSON.parse(errorMessage);
+                    if (errorObj.error === 'key') {
+                        yield options.storage.saveString(KEY_SERVER_PUBIC_KEY_ID, errorObj.key_id.toString());
+                        continue;
+                    }
+                }
+                catch (_a) {
                 }
             }
-            catch (_a) {
+            else {
+                errorMessage = `unknown ksm error, code ${response.statusCode}`;
             }
             throw new Error(errorMessage);
         }
@@ -1982,8 +2018,8 @@ const postQuery = (options, path, payload) => __awaiter(void 0, void 0, void 0, 
             : new Uint8Array();
     }
 });
-const decryptRecord = (record) => __awaiter(void 0, void 0, void 0, function* () {
-    const decryptedRecord = yield exports.platform.decrypt(exports.platform.base64ToBytes(record.data), record.recordUid);
+const decryptRecord = (record, storage) => __awaiter(void 0, void 0, void 0, function* () {
+    const decryptedRecord = yield exports.platform.decrypt(exports.platform.base64ToBytes(record.data), record.recordUid || KEY_APP_KEY, storage);
     const keeperRecord = {
         recordUid: record.recordUid,
         data: JSON.parse(exports.platform.bytesToString(decryptedRecord)),
@@ -2015,11 +2051,14 @@ const fetchAndDecryptSecrets = (options, recordsFilter) => __awaiter(void 0, voi
         justBound = true;
         yield exports.platform.unwrap(exports.platform.base64ToBytes(response.encryptedAppKey), KEY_APP_KEY, KEY_CLIENT_KEY, storage);
         yield storage.delete(KEY_CLIENT_KEY);
+        yield storage.saveString(KEY_OWNER_PUBLIC_KEY, response.appOwnerPublicKey);
     }
     if (response.records) {
         for (const record of response.records) {
-            yield exports.platform.unwrap(exports.platform.base64ToBytes(record.recordKey), record.recordUid, KEY_APP_KEY, storage, true);
-            const decryptedRecord = yield decryptRecord(record);
+            if (record.recordKey) {
+                yield exports.platform.unwrap(exports.platform.base64ToBytes(record.recordKey), record.recordUid, KEY_APP_KEY, storage, true);
+            }
+            const decryptedRecord = yield decryptRecord(record, storage);
             records.push(decryptedRecord);
         }
     }
@@ -2034,9 +2073,18 @@ const fetchAndDecryptSecrets = (options, recordsFilter) => __awaiter(void 0, voi
             }
         }
     }
+    let appData;
+    if (response.appData) {
+        appData = JSON.parse(exports.platform.bytesToString(yield exports.platform.decrypt(webSafe64ToBytes(response.appData), KEY_APP_KEY)));
+    }
     const secrets = {
+        appData: appData,
+        expiresOn: response.expiresOn > 0 ? new Date(response.expiresOn) : undefined,
         records: records
     };
+    if (response.warnings && response.warnings.length > 0) {
+        secrets.warnings = response.warnings;
+    }
     return { secrets, justBound };
 });
 const getClientId = (clientKey) => __awaiter(void 0, void 0, void 0, function* () {
@@ -2057,7 +2105,8 @@ const initializeStorage = (storage, oneTimeToken, hostName) => __awaiter(void 0,
         host = {
             US: 'keepersecurity.com',
             EU: 'keepersecurity.eu',
-            AU: 'keepersecurity.com.au'
+            AU: 'keepersecurity.com.au',
+            GOV: 'govcloud.keepersecurity.us'
         }[tokenParts[0].toUpperCase()];
         if (!host) {
             host = tokenParts[0];
@@ -2095,6 +2144,14 @@ const getSecrets = (options, recordsFilter) => __awaiter(void 0, void 0, void 0,
 const updateSecret = (options, record) => __awaiter(void 0, void 0, void 0, function* () {
     const payload = yield prepareUpdatePayload(options.storage, record);
     yield postQuery(options, 'update_secret', payload);
+});
+const createSecret = (options, folderUid, recordData) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!exports.platform.hasKeysCached()) {
+        yield getSecrets(options); // need to warm up keys cache before posting a record
+    }
+    const payload = yield prepareCreatePayload(options.storage, folderUid, recordData);
+    yield postQuery(options, 'create_secret', payload);
+    return payload.recordUid;
 });
 const downloadFile = (file) => __awaiter(void 0, void 0, void 0, function* () {
     const fileResponse = yield exports.platform.get(file.url, {});
@@ -2245,6 +2302,7 @@ initialize();
 
 exports.cachingPostFunction = cachingPostFunction;
 exports.connectPlatform = connectPlatform;
+exports.createSecret = createSecret;
 exports.downloadFile = downloadFile;
 exports.downloadThumbnail = downloadThumbnail;
 exports.generatePassword = generatePassword;

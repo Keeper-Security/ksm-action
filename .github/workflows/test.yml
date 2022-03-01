@@ -1,5 +1,7 @@
 name: 'build-test'
 on: # rebuild any PRs and main branch changes
+  workflow_dispatch:
+
   pull_request:
   push:
     branches:
@@ -34,3 +36,17 @@ jobs:
         run: |
           echo "Username is ${{ steps.ksm.outputs.username }}"
 
+      - uses: Keeper-Security/ksm-action@master
+        id: ksm2
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            b7K1o8Fwoot8bryzH6pZJg/field/login > username2
+            b7K1o8Fwoot8bryzH6pZJg/field/password > password2
+            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > ./ch12.txt
+            b7K1o8Fwoot8bryzH6pZJg/field/login > env:USERNAME2
+            b7K1o8Fwoot8bryzH6pZJg/field/password > env:PASSWORD2
+            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch12.txt
+      - name: Print secrets2
+        run: |
+          echo "Username is ${{ steps.ksm2.outputs.username2 }}"

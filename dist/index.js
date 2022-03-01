@@ -8,7 +8,11 @@ require('./sourcemap-register.js');/******/ (() => { // webpackBootstrap
 
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -88,6 +92,12 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         const config = core.getInput('keeper-secret-config');
         const inputs = (0, exports.parseSecretsInputs)(core.getMultilineInput('secrets'));
         const secrets = yield (0, secrets_manager_core_1.getSecrets)({ storage: (0, secrets_manager_core_1.loadJsonConfig)(config) }, (0, exports.getRecordUids)(inputs));
+        if (secrets.warnings) {
+            // Print warnings if the backend find issues with the requested records
+            for (const warningMessage of secrets.warnings) {
+                core.warning(warningMessage);
+            }
+        }
         for (const input of inputs) {
             const secret = (0, secrets_manager_core_1.getValue)(secrets, input.notation);
             core.setSecret(secret);
@@ -108,6 +118,7 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         let errorMessage = 'Failed getting secrets from Keeper Secrets Manager';
         if (error instanceof Error) {
             errorMessage = error.message;
+            core.error(error.stack || 'No stack');
         }
         core.setFailed(errorMessage);
     }

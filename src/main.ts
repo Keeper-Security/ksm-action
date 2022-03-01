@@ -57,6 +57,14 @@ const run = async (): Promise<void> => {
         const config = core.getInput('keeper-secret-config')
         const inputs = parseSecretsInputs(core.getMultilineInput('secrets'))
         const secrets = await getSecrets({storage: loadJsonConfig(config)}, getRecordUids(inputs))
+
+        if (secrets.warnings) {
+            // Print warnings if the backend find issues with the requested records
+            for (const warningMessage of secrets.warnings) {
+                core.warning(warningMessage)
+            }
+        }
+
         for (const input of inputs) {
             const secret = getValue(secrets, input.notation)
             core.setSecret(secret)
@@ -76,6 +84,7 @@ const run = async (): Promise<void> => {
         let errorMessage = 'Failed getting secrets from Keeper Secrets Manager'
         if (error instanceof Error) {
             errorMessage = error.message
+            core.error(error.stack || 'No stack')
         }
 
         core.setFailed(errorMessage)

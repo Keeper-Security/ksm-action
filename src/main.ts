@@ -16,10 +16,13 @@ type SecretsInput = {
 
 export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
     const results: SecretsInput[] = []
+
     for (const input of inputs) {
+        core.debug(`inputParts=[${input}]`);
         const inputParts = input.split(/\s*>\s*/)
         let destinationType: DestinationType = DestinationType.output
         let destination = inputParts[1]
+        core.debug(`destination=[${destination}]`)
         if (destination.startsWith('env:')) {
             destinationType = DestinationType.environment
             destination = destination.slice(4)
@@ -30,6 +33,9 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
         if (inputParts[0].split('/')[1] === 'file') {
             destinationType = DestinationType.file
         }
+
+        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}]`)
+
         results.push({
             notation: inputParts[0],
             destination,
@@ -56,7 +62,10 @@ const run = async (): Promise<void> => {
     try {
         const config = core.getInput('keeper-secret-config')
         const inputs = parseSecretsInputs(core.getMultilineInput('secrets'))
+
+        core.debug("Retrieving Secrets from KSM...")
         const secrets = await getSecrets({storage: loadJsonConfig(config)}, getRecordUids(inputs))
+        core.debug(`Retrieved [${secrets.records.length}] secrets`)
 
         if (secrets.warnings) {
             // Print warnings if the backend find issues with the requested records
@@ -66,6 +75,8 @@ const run = async (): Promise<void> => {
         }
 
         for (const input of inputs) {
+            core.debug(`Retrieving secret value using notation [${input.notation}]`)
+
             const secret = getValue(secrets, input.notation)
             core.setSecret(secret)
             switch (input.destinationType) {

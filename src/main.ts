@@ -18,7 +18,7 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
     const results: SecretsInput[] = []
 
     for (const input of inputs) {
-        core.debug(`inputParts=[${input}]`);
+        core.debug(`inputParts=[${input}]`)
         const inputParts = input.split(/\s*>\s*/)
         let destinationType: DestinationType = DestinationType.output
         let destination = inputParts[1]
@@ -63,7 +63,7 @@ const run = async (): Promise<void> => {
         const config = core.getInput('keeper-secret-config')
         const inputs = parseSecretsInputs(core.getMultilineInput('secrets'))
 
-        core.debug("Retrieving Secrets from KSM...")
+        core.debug('Retrieving Secrets from KSM...')
         const secrets = await getSecrets({storage: loadJsonConfig(config)}, getRecordUids(inputs))
         core.debug(`Retrieved [${secrets.records.length}] secrets`)
 

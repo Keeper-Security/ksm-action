@@ -37,6 +37,6 @@
     "prettier": "2.6.2",
     "ts-jest": "^27.1.4",
     "typescript": "^4.6.3",
-    "@keeper-security/secrets-manager-core": "16.3.0"
+    "@keeper-security/secrets-manager-core": "16.3.1"
   }
 }

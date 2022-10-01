@@ -27,7 +27,7 @@
   "devDependencies": {
     "@actions/core": "^1.9.1",
     "@keeper-security/secrets-manager-core": "16.3.3",
-    "@types/node": "^18.7.18",
+    "@types/node": "^18.7.23",
     "@typescript-eslint/parser": "^5.38.0",
     "@vercel/ncc": "^0.34.0",
     "eslint": "^8.23.1",

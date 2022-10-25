@@ -62,7 +62,7 @@ const run = async (): Promise<void> => {
     try {
         const config = core.getInput('keeper-secret-config')
 
-        if (!config){
+        if (!config) {
             core.error('Configuration string is empty. Looks like secret was not located in your environment. Did you forget include "environment" to the job?')
             core.setFailed('Configuration string is empty')
             return

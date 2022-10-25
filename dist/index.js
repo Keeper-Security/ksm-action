@@ -278,7 +278,6 @@ const file_command_1 = __nccwpck_require__(717);
 const utils_1 = __nccwpck_require__(278);
 const os = __importStar(__nccwpck_require__(37));
 const path = __importStar(__nccwpck_require__(17));
-const uuid_1 = __nccwpck_require__(840);
 const oidc_utils_1 = __nccwpck_require__(41);
 /**
  * The code to exit an action
@@ -308,20 +307,9 @@ function exportVariable(name, val) {
     process.env[name] = convertedVal;
     const filePath = process.env['GITHUB_ENV'] || '';
     if (filePath) {
-        const delimiter = `ghadelimiter_${uuid_1.v4()}`;
-        // These should realistically never happen, but just in case someone finds a way to exploit uuid generation let's not allow keys or values that contain the delimiter.
-        if (name.includes(delimiter)) {
-            throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
-        }
-        if (convertedVal.includes(delimiter)) {
-            throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
-        }
-        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
-        file_command_1.issueCommand('ENV', commandValue);
+        return file_command_1.issueFileCommand('ENV', file_command_1.prepareKeyValueMessage(name, val));
     }
-    else {
-        command_1.issueCommand('set-env', { name }, convertedVal);
-    }
+    command_1.issueCommand('set-env', { name }, convertedVal);
 }
 exports.exportVariable = exportVariable;
 /**
@@ -339,7 +327,7 @@ exports.setSecret = setSecret;
 function addPath(inputPath) {
     const filePath = process.env['GITHUB_PATH'] || '';
     if (filePath) {
-        file_command_1.issueCommand('PATH', inputPath);
+        file_command_1.issueFileCommand('PATH', inputPath);
     }
     else {
         command_1.issueCommand('add-path', {}, inputPath);
@@ -379,7 +367,10 @@ function getMultilineInput(name, options) {
     const inputs = getInput(name, options)
         .split('\n')
         .filter(x => x !== '');
-    return inputs;
+    if (options && options.trimWhitespace === false) {
+        return inputs;
+    }
+    return inputs.map(input => input.trim());
 }
 exports.getMultilineInput = getMultilineInput;
 /**
@@ -412,8 +403,12 @@ exports.getBooleanInput = getBooleanInput;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
+    const filePath = process.env['GITHUB_OUTPUT'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('OUTPUT', file_command_1.prepareKeyValueMessage(name, value));
+    }
     process.stdout.write(os.EOL);
-    command_1.issueCommand('set-output', { name }, value);
+    command_1.issueCommand('set-output', { name }, utils_1.toCommandValue(value));
 }
 exports.setOutput = setOutput;
 /**
@@ -542,7 +537,11 @@ exports.group = group;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveState(name, value) {
-    command_1.issueCommand('save-state', { name }, value);
+    const filePath = process.env['GITHUB_STATE'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('STATE', file_command_1.prepareKeyValueMessage(name, value));
+    }
+    command_1.issueCommand('save-state', { name }, utils_1.toCommandValue(value));
 }
 exports.saveState = saveState;
 /**
@@ -608,13 +607,14 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.issueCommand = void 0;
+exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const fs = __importStar(__nccwpck_require__(147));
 const os = __importStar(__nccwpck_require__(37));
+const uuid_1 = __nccwpck_require__(840);
 const utils_1 = __nccwpck_require__(278);
-function issueCommand(command, message) {
+function issueFileCommand(command, message) {
     const filePath = process.env[`GITHUB_${command}`];
     if (!filePath) {
         throw new Error(`Unable to find environment variable for file command ${command}`);
@@ -626,7 +626,22 @@ function issueCommand(command, message) {
         encoding: 'utf8'
     });
 }
-exports.issueCommand = issueCommand;
+exports.issueFileCommand = issueFileCommand;
+function prepareKeyValueMessage(key, value) {
+    const delimiter = `ghadelimiter_${uuid_1.v4()}`;
+    const convertedValue = utils_1.toCommandValue(value);
+    // These should realistically never happen, but just in case someone finds a
+    // way to exploit uuid generation let's not allow keys or values that contain
+    // the delimiter.
+    if (key.includes(delimiter)) {
+        throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
+    }
+    if (convertedValue.includes(delimiter)) {
+        throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
+    }
+    return `${key}<<${delimiter}${os.EOL}${convertedValue}${os.EOL}${delimiter}`;
+}
+exports.prepareKeyValueMessage = prepareKeyValueMessage;
 //# sourceMappingURL=file-command.js.map
 
 /***/ }),
@@ -1889,7 +1904,7 @@ exports.checkBypass = checkBypass;
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 16.3.3 - September 12, 2022 22:38:19 */
+/* Version: 16.4.0 - October 19, 2022 20:25:10 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -2029,9 +2044,8 @@ const webSafe64FromBytes = (source) => webSafe64(exports.platform.bytesToBase64(
 // privateKey: key.slice(36, 68)
 const privateDerToPublicRaw = (key) => key.slice(-65);
 const b32encode = (base32Text) => {
-    /* encodes a string s to base32 and returns the encoded string */
+    /* encodes a string to base32 and returns the encoded string */
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    // private static readonly Regex rxBase32Alphabet = new Regex($"", RegexOptions.Compiled);
     // The padding specified in RFC 3548 section 2.2 is not required and should be omitted.
     const base32 = (base32Text || '').replace(/=+$/g, '').toUpperCase();
     if (!base32 || !/^[A-Z2-7]+$/.test(base32))
@@ -2091,37 +2105,20 @@ const getTotpCode = (url, unixTimeSeconds = 0) => __awaiter(void 0, void 0, void
     codeInt = Math.floor(codeInt);
     let codeStr = codeInt.toString(10);
     while (codeStr.length < digits)
-        codeStr = "0" + codeStr;
+        codeStr = '0' + codeStr;
     const elapsed = Math.floor(tmBase % period); // time elapsed in current period in seconds
     const ttl = period - elapsed; // time to live in seconds
     return { code: codeStr, timeLeft: ttl, period: period };
 });
-const generatePassword = (length = 64, lowercase = 0, uppercase = 0, digits = 0, specialCharacters = 0) => __awaiter(void 0, void 0, void 0, function* () {
-    const asciiLowercase = 'abcdefghijklmnopqrstuvwxyz';
-    const asciiUppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const asciiDigits = '0123456789';
-    const asciiSpecialCharacters = '"!@#$%()+;<>=?[]{}^.,';
-    length = (typeof length === 'number' && length > 0) ? length : 64;
-    lowercase = (typeof lowercase === 'number' && lowercase > 0) ? lowercase : 0;
-    uppercase = (typeof uppercase === 'number' && uppercase > 0) ? uppercase : 0;
-    digits = (typeof digits === 'number' && digits > 0) ? digits : 0;
-    specialCharacters = (typeof specialCharacters === 'number' && specialCharacters > 0) ? specialCharacters : 0;
-    if (lowercase == 0 && uppercase == 0 && digits == 0 && specialCharacters == 0) {
-        const increment = length / 4;
-        const lastIncrement = increment + length % 4;
-        lowercase = uppercase = digits = increment;
-        specialCharacters = lastIncrement;
-    }
-    let result = '';
-    for (let i = 0; i < lowercase; i++)
-        result += yield exports.platform.getRandomCharacterInCharset(asciiLowercase);
-    for (let i = 0; i < uppercase; i++)
-        result += yield exports.platform.getRandomCharacterInCharset(asciiUppercase);
-    for (let i = 0; i < digits; i++)
-        result += yield exports.platform.getRandomCharacterInCharset(asciiDigits);
-    for (let i = 0; i < specialCharacters; i++)
-        result += yield exports.platform.getRandomCharacterInCharset(asciiSpecialCharacters);
+// password generation
+const defaultPasswordLength = 32;
+const asciiSpecialCharacters = '"!@#$%()+;<>=?[]{}^.,';
+const asciiLowercase = 'abcdefghijklmnopqrstuvwxyz';
+const asciiUppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const asciiDigits = '0123456789';
+const shuffle = (text) => __awaiter(void 0, void 0, void 0, function* () {
     // Fisher-Yates shuffle
+    let result = text;
     if (result.length > 1) {
         let a = result.split('');
         for (let i = a.length - 1; i > 0; i--) {
@@ -2135,6 +2132,75 @@ const generatePassword = (length = 64, lowercase = 0, uppercase = 0, digits = 0,
         result = a.join('');
     }
     return result;
+});
+const randomSample = (length, charset) => __awaiter(void 0, void 0, void 0, function* () {
+    let result = '';
+    length = Math.abs(length);
+    for (let i = 0; i < length; i++)
+        result += yield exports.platform.getRandomCharacterInCharset(charset);
+    return result;
+});
+/**
+ * Generates a new password of specified minimum length
+ * using provided number of uppercase, lowercase, digits and special characters.
+ *
+ * Note: If all character groups are unspecified or all have exact zero length
+ * then password characters are chosen from all groups uniformly at random.
+ *
+ * Note: If all charset lengths are negative or 0 but can't reach min_length
+ * then all exact/negative charset lengths will be treated as minimum number of characters instead.
+ *
+ * @param {number} minLength - Minimum password length - default: 32
+ * @param {number|null} lowercase - Minimum number of lowercase characters if positive, exact if 0 or negative
+ * @param {number|null} uppercase - Minimum number of uppercase characters if positive, exact if 0 or negative
+ * @param {number|null} digits - Minimum number of digits if positive, exact if 0 or negative
+ * @param {number|null} specialCharacters - Minimum number of special characters if positive, exact if 0 or negative
+ * @param {number} specialCharacterSet - String containing custom set of special characters to pick from
+ * @returns {string} Generated password string
+ */
+const generatePassword = (minLength = defaultPasswordLength, lowercase = null, uppercase = null, digits = null, specialCharacters = null, specialCharacterSet = asciiSpecialCharacters) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
+    const counts = [lowercase, uppercase, digits, specialCharacters];
+    const sumCategories = (_a = counts.reduce((sum, x) => sum + Math.abs(x !== null && x !== void 0 ? x : 0), 0)) !== null && _a !== void 0 ? _a : 0;
+    // If all lengths are exact/negative but don't reach minLength - convert to minimum/positive lengths
+    const numExactCounts = (_b = counts.reduce((sum, x) => sum + (((x !== null && x !== void 0 ? x : 1) <= 0) ? 1 : 0), 0)) !== null && _b !== void 0 ? _b : 0;
+    if (counts.length == numExactCounts && sumCategories < minLength) {
+        if ((lowercase !== null && lowercase !== void 0 ? lowercase : 0) < 0)
+            lowercase = Math.abs(lowercase !== null && lowercase !== void 0 ? lowercase : 0);
+        if ((uppercase !== null && uppercase !== void 0 ? uppercase : 0) < 0)
+            uppercase = Math.abs(uppercase !== null && uppercase !== void 0 ? uppercase : 0);
+        if ((digits !== null && digits !== void 0 ? digits : 0) < 0)
+            digits = Math.abs(digits !== null && digits !== void 0 ? digits : 0);
+        if ((specialCharacters !== null && specialCharacters !== void 0 ? specialCharacters : 0) < 0)
+            specialCharacters = Math.abs(specialCharacters !== null && specialCharacters !== void 0 ? specialCharacters : 0);
+    }
+    let extraChars = '';
+    let extraCount = 0;
+    if (minLength > sumCategories)
+        extraCount = minLength - sumCategories;
+    if ((lowercase !== null && lowercase !== void 0 ? lowercase : 1) > 0)
+        extraChars += asciiLowercase;
+    if ((uppercase !== null && uppercase !== void 0 ? uppercase : 1) > 0)
+        extraChars += asciiUppercase;
+    if ((digits !== null && digits !== void 0 ? digits : 1) > 0)
+        extraChars += asciiDigits;
+    if ((specialCharacters !== null && specialCharacters !== void 0 ? specialCharacters : 1) > 0)
+        extraChars += specialCharacterSet;
+    if (extraCount > 0 && !extraChars)
+        extraChars = asciiLowercase + asciiUppercase + asciiDigits + specialCharacterSet;
+    const categoryMap = [
+        { count: Math.abs(lowercase !== null && lowercase !== void 0 ? lowercase : 0), chars: asciiLowercase },
+        { count: Math.abs(uppercase !== null && uppercase !== void 0 ? uppercase : 0), chars: asciiUppercase },
+        { count: Math.abs(digits !== null && digits !== void 0 ? digits : 0), chars: asciiDigits },
+        { count: Math.abs(specialCharacters !== null && specialCharacters !== void 0 ? specialCharacters : 0), chars: specialCharacterSet },
+        { count: extraCount, chars: extraChars }
+    ];
+    let passwordCharacters = '';
+    for (let i = 0; i < categoryMap.length; i++)
+        if (categoryMap[i].count > 0)
+            passwordCharacters += yield randomSample(categoryMap[i].count, categoryMap[i].chars);
+    const password = yield shuffle(passwordCharacters);
+    return password;
 });
 
 const bytesToBase64 = (data) => Buffer.from(data).toString('base64');
@@ -2388,7 +2454,7 @@ const nodePlatform = {
     getRandomCharacterInCharset: getRandomCharacterInCharset
 };
 
-let packageVersion = '16.3.3';
+let packageVersion = '16.4.0';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
@@ -2452,6 +2518,18 @@ const prepareUpdatePayload = (storage, record) => __awaiter(void 0, void 0, void
         recordUid: record.recordUid,
         data: webSafe64FromBytes(encryptedRecord),
         revision: record.revision
+    };
+});
+const prepareDeletePayload = (storage, recordUids) => __awaiter(void 0, void 0, void 0, function* () {
+    const clientId = yield storage.getString(KEY_CLIENT_ID);
+    if (!clientId) {
+        throw new Error('Client Id is missing from the configuration');
+    }
+    console.log("recordUIDs: ", recordUids);
+    return {
+        clientVersion: 'ms' + packageVersion,
+        clientId: clientId,
+        recordUids: recordUids
     };
 });
 const prepareCreatePayload = (storage, folderUid, recordData) => __awaiter(void 0, void 0, void 0, function* () {
@@ -2733,6 +2811,12 @@ const updateSecret = (options, record) => __awaiter(void 0, void 0, void 0, func
     const payload = yield prepareUpdatePayload(options.storage, record);
     yield postQuery(options, 'update_secret', payload);
 });
+const deleteSecret = (options, recordUids) => __awaiter(void 0, void 0, void 0, function* () {
+    const payload = yield prepareDeletePayload(options.storage, recordUids);
+    const responseData = yield postQuery(options, 'delete_secret', payload);
+    const response = JSON.parse(exports.platform.bytesToString(responseData));
+    return response;
+});
 const createSecret = (options, folderUid, recordData) => __awaiter(void 0, void 0, void 0, function* () {
     if (!exports.platform.hasKeysCached()) {
         yield getSecrets(options); // need to warm up keys cache before posting a record
@@ -2901,6 +2985,7 @@ initialize();
 exports.cachingPostFunction = cachingPostFunction;
 exports.connectPlatform = connectPlatform;
 exports.createSecret = createSecret;
+exports.deleteSecret = deleteSecret;
 exports.downloadFile = downloadFile;
 exports.downloadThumbnail = downloadThumbnail;
 exports.findSecretByTitle = findSecretByTitle;

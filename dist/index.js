@@ -100,7 +100,8 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         }
         const inputs = (0, exports.parseSecretsInputs)(core.getMultilineInput('secrets'));
         core.debug('Retrieving Secrets from KSM...');
-        const secrets = yield (0, secrets_manager_core_1.getSecrets)({ storage: (0, secrets_manager_core_1.loadJsonConfig)(config) }, (0, exports.getRecordUids)(inputs));
+        const options = { storage: (0, secrets_manager_core_1.loadJsonConfig)(config) };
+        const secrets = yield (0, secrets_manager_core_1.getSecrets)(options, (0, exports.getRecordUids)(inputs));
         core.debug(`Retrieved [${secrets.records.length}] secrets`);
         if (secrets.warnings) {
             // Print warnings if the backend find issues with the requested records
@@ -1904,7 +1905,7 @@ exports.checkBypass = checkBypass;
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 16.5.0 - February 9, 2023 17:36:04 */
+/* Version: 16.5.1 - February 18, 2023 00:31:34 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -2466,7 +2467,309 @@ const nodePlatform = {
     getRandomCharacterInCharset: getRandomCharacterInCharset
 };
 
-let packageVersion = '16.5.0';
+/**
+ * @deprecated Use `getNotationResults()` instead.
+ */
+function getValue(secrets, notation) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+    const parsedNotation = parseNotation(notation, true); // prefix, record, selector, footer
+    if (parsedNotation.length < 3)
+        throw Error(`Invalid notation ${notation}`);
+    if (parsedNotation[2].text == null)
+        throw Error(`Invalid notation ${notation}`);
+    const selector = parsedNotation[2].text[0]; // type|title|notes or file|field|custom_field
+    if (parsedNotation[1].text == null)
+        throw Error(`Invalid notation ${notation}`);
+    const recordToken = parsedNotation[1].text[0]; // UID or Title
+    const record = secrets.records.find(x => x.recordUid === recordToken || x.data.title === recordToken);
+    if (!record)
+        throw Error(`Record '${recordToken}' not found`);
+    const parameter = (_c = (_b = (_a = parsedNotation[2]) === null || _a === void 0 ? void 0 : _a.parameter) === null || _b === void 0 ? void 0 : _b.at(0)) !== null && _c !== void 0 ? _c : null;
+    const index1 = (_f = (_e = (_d = parsedNotation[2]) === null || _d === void 0 ? void 0 : _d.index1) === null || _e === void 0 ? void 0 : _e.at(0)) !== null && _f !== void 0 ? _f : null;
+    const index2 = (_j = (_h = (_g = parsedNotation[2]) === null || _g === void 0 ? void 0 : _g.index2) === null || _h === void 0 ? void 0 : _h.at(0)) !== null && _j !== void 0 ? _j : null;
+    switch (selector.toLowerCase()) {
+        case 'type': return (_k = record.data.type) !== null && _k !== void 0 ? _k : '';
+        case 'title': return (_l = record.data.title) !== null && _l !== void 0 ? _l : '';
+        case 'notes': return (_m = record.data.notes) !== null && _m !== void 0 ? _m : '';
+        case 'file': {
+            if (parameter == null)
+                throw Error(`Notation error - Missing required parameter: filename or file UID for files in record '${recordToken}'`);
+            if (((_p = (_o = record === null || record === void 0 ? void 0 : record.files) === null || _o === void 0 ? void 0 : _o.length) !== null && _p !== void 0 ? _p : 0) < 1)
+                throw Error(`Notation error - Record ${recordToken} has no file attachments.`);
+            let files = (_q = record.files) !== null && _q !== void 0 ? _q : [];
+            files = files.filter(x => { var _a, _b; return parameter == ((_a = x.data) === null || _a === void 0 ? void 0 : _a.name) || parameter == ((_b = x.data) === null || _b === void 0 ? void 0 : _b.title) || parameter == x.fileUid; });
+            // file searches do not use indexes and rely on unique file names or fileUid
+            if (((_r = files === null || files === void 0 ? void 0 : files.length) !== null && _r !== void 0 ? _r : 0) < 1)
+                throw Error(`Notation error - Record ${recordToken} has no files matching the search criteria '${parameter}'`);
+            // legacy compat. mode
+            return files[0];
+            // if ((files?.length ?? 0) > 1)
+            //     throw Error(`Notation error - Record ${recordToken} has multiple files matching the search criteria '${parameter}'`)
+            // try {
+            //     const contents = await downloadFile(files[0])
+            //     const text = webSafe64FromBytes(contents)
+            //     return text
+            // } catch (e) { throw Error(`Notation error - download failed for Record: ${recordToken}, File: ${parameter}, FileUID: ${files[0].fileUid}, Message: ${e}`)}
+        }
+        case 'field':
+        case 'custom_field': {
+            if (parameter == null)
+                throw Error(`Notation error - Missing required parameter for the field (type or label): ex. /field/type or /custom_field/MyLabel`);
+            const fields = (selector.toLowerCase() == 'field' ? record.data.fields :
+                selector.toLowerCase() == 'custom_field' ? record.data.custom : null);
+            if (!fields)
+                throw new Error(`Notation error - Expected /field or /custom_field but found /${selector}`);
+            // legacy compat mode - find first field only
+            const field = fields.find(x => parameter === x.type || parameter === x.label);
+            if (!field)
+                throw new Error(`Field ${parameter} not found in the record ${record.recordUid}`);
+            // /<type|label>[index1][index2], ex. /url == /url[] == /url[][] == full value
+            const idx = tryParseInt(index1 || '', -1); // -1 = full value
+            // valid only if [] or missing - ex. /field/phone or /field/phone[]
+            if (idx == -1 && !(parsedNotation[2].index1 == null || parsedNotation[2].index1[1] == '' || parsedNotation[2].index1[1] == '[]'))
+                throw new Error(`Notation error - Invalid field index ${idx}.`);
+            let values = ((field === null || field === void 0 ? void 0 : field.value) != null ? field.value : []);
+            if (idx >= values.length)
+                throw new Error(`Notation error - Field index out of bounds ${idx} >= ${values.length} for field '${parameter}' in record '${record.recordUid}'`);
+            if (idx >= 0) // single index
+                values = [values[idx]];
+            const fullObjValue = (parsedNotation[2].index2 == null || parsedNotation[2].index2[1] == '' || parsedNotation[2].index2[1] == '[]');
+            let objPropertyName = '';
+            if (parsedNotation[2].index2 != null)
+                objPropertyName = parsedNotation[2].index2[0];
+            // legacy compatibility mode - no indexes, ex. /url returns value[0]
+            if ((parsedNotation[2].index1 == null || parsedNotation[2].index1[1] == '') &&
+                (parsedNotation[2].index2 == null || parsedNotation[2].index2[1] == ''))
+                return values[0]; // legacy compatibility
+            // return (typeof values[0] === 'string' ? values[0] as string : JSON.stringify(values[0]))
+            // legacy compatibility mode - empty index, ex. /url[] returns ["value"]
+            if ('[]' == ((_u = (_t = (_s = parsedNotation[2]) === null || _s === void 0 ? void 0 : _s.index1) === null || _t === void 0 ? void 0 : _t.at(1)) !== null && _u !== void 0 ? _u : '') && (index2 == null || index2 == ''))
+                return values; // legacy compatibility
+            // return JSON.stringify(values)
+            // should be handled by parseNotation w/ legacyMode=true converts /name[middle] to name[][middle]
+            // legacy compatibility mode - index2 only, ex. /name[first] returns value[0][first]
+            if ((index1 !== null && index1 !== void 0 ? index1 : '') == '' && (index2 !== null && index2 !== void 0 ? index2 : '') != '')
+                return values[0][index2 !== null && index2 !== void 0 ? index2 : '']; // legacy compatibility
+            // return values[0].getProperty(objPropertyName)
+            if (fullObjValue) {
+                return idx >= 0 ? values[0] : values; // legacy compatibility
+            }
+            else if (values[0] != null) {
+                if (objPropertyName in values[0]) {
+                    let propKey = objPropertyName;
+                    const propValue = values[0][propKey];
+                    return propValue; // legacy compatibility
+                }
+                else
+                    throw Error(`Notation error - value object has no property '${objPropertyName}'`);
+            }
+            else
+                throw Error(`Notation error - Cannot extract property '${objPropertyName}' from null value.`);
+        }
+        default: throw Error(`Invalid notation ${notation}`);
+    }
+}
+class NotationSection {
+    constructor(sectionName) {
+        this.section = sectionName;
+        this.isPresent = false;
+        this.startPos = -1;
+        this.endPos = -1;
+        this.text = null;
+        this.parameter = null;
+        this.index1 = null;
+        this.index2 = null;
+    }
+}
+const EscapeChar = '\\'.charCodeAt(0);
+const EscapeChars = '/[]\\'; // /[]\ -> \/ ,\[, \], \\
+// Escape the characters in plaintext sections only - title, label or filename
+function parseSubsection(text, pos, delimiters, escaped = false) {
+    // raw string excludes start delimiter (if '/') but includes end delimiter or both (if '[',']')
+    if (!text || pos < 0 || pos >= text.length)
+        return null;
+    if (!delimiters || delimiters.length > 2)
+        throw new Error(`Notation parser: Internal error - Incorrect delimiters count. Delimiters: '${delimiters}'`);
+    let token = '';
+    let raw = '';
+    while (pos < text.length) {
+        if (escaped && EscapeChar == text.charCodeAt(pos)) {
+            // notation cannot end in single char incomplete escape sequence
+            // and only escape_chars should be escaped
+            if (((pos + 1) >= text.length) || !EscapeChars.includes(text[pos + 1]))
+                throw new Error(`Notation parser: Incorrect escape sequence at position ${pos}`);
+            // copy the properly escaped character
+            token += text[pos + 1];
+            raw += text[pos] + text[pos + 1];
+            pos += 2;
+        }
+        else { // escaped == false || EscapeChar != text.charCodeAt(pos)
+            raw += text[pos]; // delimiter is included in raw text
+            if (delimiters.length == 1) {
+                if (text[pos] == delimiters[0])
+                    break;
+                else
+                    token += text[pos];
+            }
+            else { // 2 delimiters
+                if (raw[0] != delimiters[0])
+                    throw new Error(`Notation parser: Index sections must start with '['`);
+                if (raw.length > 1 && text[pos] == delimiters[0])
+                    throw new Error(`Notation parser: Index sections do not allow extra '[' inside.`);
+                if (!delimiters.includes(text[pos]))
+                    token += text[pos];
+                else if (text[pos] == delimiters[1])
+                    break;
+            }
+            pos++;
+        }
+    }
+    //pos = (pos < text.length) ? pos : text.length - 1
+    if (delimiters.length == 2 && ((raw.length < 2 || raw[0] != delimiters[0] || raw[raw.length - 1] != delimiters[1]) ||
+        (escaped && raw.charCodeAt(raw.length - 2) == EscapeChar)))
+        throw new Error(`Notation parser: Index sections must be enclosed in '[' and ']'`);
+    const result = [token, raw];
+    return result;
+}
+function parseSection(notation, section, pos) {
+    if (!notation)
+        throw new Error(`Keeper notation parsing error - missing notation URI`);
+    const sectionName = section.toLowerCase();
+    const sections = ['prefix', 'record', 'selector', 'footer'];
+    if (!sections.includes(sectionName))
+        throw new Error(`Keeper notation parsing error - unknown section: '${sectionName}'`);
+    const result = new NotationSection(section);
+    result.startPos = pos;
+    switch (sectionName) {
+        case 'prefix': {
+            // prefix 'keeper://' is not mandatory
+            const uriPrefix = 'keeper://';
+            if (notation.toLowerCase().startsWith(uriPrefix)) {
+                result.isPresent = true;
+                result.startPos = 0;
+                result.endPos = uriPrefix.length - 1;
+                result.text = [notation.substring(0, uriPrefix.length), notation.substring(0, uriPrefix.length)];
+            }
+            break;
+        }
+        case 'footer': {
+            // footer should not be present - used only for verification
+            result.isPresent = (pos < notation.length);
+            if (result.isPresent) {
+                result.startPos = pos;
+                result.endPos = notation.length - 1;
+                result.text = [notation.substring(pos), notation.substring(pos)];
+            }
+            break;
+        }
+        case 'record': {
+            // record is always present - either UID or title
+            result.isPresent = (pos < notation.length);
+            if (result.isPresent) {
+                const parsed = parseSubsection(notation, pos, '/', true);
+                if (parsed != null) {
+                    result.startPos = pos;
+                    result.endPos = pos + parsed[1].length - 1;
+                    result.text = parsed;
+                }
+            }
+            break;
+        }
+        case 'selector': {
+            // selector is always present - type|title|notes | field|custom_field|file
+            result.isPresent = (pos < notation.length);
+            if (result.isPresent) {
+                let parsed = parseSubsection(notation, pos, '/', false);
+                if (parsed != null) {
+                    result.startPos = pos;
+                    result.endPos = pos + parsed[1].length - 1;
+                    result.text = parsed;
+                    // selector.parameter - <field type>|<field label> | <file name>
+                    // field/name[0][middle], custom_field/my label[0][middle], file/my file[0]
+                    const longSelectors = ['field', 'custom_field', 'file'];
+                    if (longSelectors.includes(parsed[0].toLowerCase())) {
+                        // TODO: File metadata extraction: ex. filename[1][size] - that requires filename to be escaped
+                        parsed = parseSubsection(notation, result.endPos + 1, '[', true);
+                        if (parsed != null) {
+                            result.parameter = parsed; // <field type>|<field label> | <filename>
+                            const plen = parsed[1].length - (parsed[1].endsWith('[') && !parsed[1].endsWith('\\[') ? 1 : 0);
+                            result.endPos += plen;
+                            parsed = parseSubsection(notation, result.endPos + 1, '[]', true);
+                            if (parsed != null) {
+                                result.index1 = parsed; // selector.index1 [int] or []
+                                result.endPos += parsed[1].length;
+                                parsed = parseSubsection(notation, result.endPos + 1, '[]', true);
+                                if (parsed != null) {
+                                    result.index2 = parsed; // selector.index2 [str]
+                                    result.endPos += parsed[1].length;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        default: throw new Error(`Keeper notation parsing error - unknown section: ${sectionName}`);
+    }
+    return result;
+}
+function parseNotation(notation, legacyMode = false) {
+    if (!notation)
+        throw new Error('Keeper notation is missing or invalid.');
+    // Notation is either plaintext keeper URI format or URL safe base64 string (UTF8)
+    // auto detect format - '/' is not part of base64 URL safe alphabet
+    if (!notation.includes('/')) {
+        try {
+            var bytes = webSafe64ToBytes(notation);
+            var plaintext = new TextDecoder('utf-8').decode(bytes);
+            notation = plaintext;
+        }
+        catch (Exception) {
+            throw new Error('Keeper notation is in invalid format - plaintext URI or URL safe base64 string expected.');
+        }
+    }
+    const prefix = parseSection(notation, 'prefix', 0); // keeper://
+    let pos = (prefix.isPresent ? prefix.endPos + 1 : 0); // prefix is optional
+    const record = parseSection(notation, 'record', pos); // <UID> or <Title>
+    pos = (record.isPresent ? record.endPos + 1 : notation.length); // record is required
+    const selector = parseSection(notation, 'selector', pos); // type|title|notes | field|custom_field|file
+    pos = (selector.isPresent ? selector.endPos + 1 : notation.length); // selector is required, indexes are optional
+    const footer = parseSection(notation, 'footer', pos); // Any text after the last section
+    // verify parsed query
+    // prefix is optional, record UID/Title and selector are mandatory
+    const shortSelectors = ['type', 'title', 'notes'];
+    const fullSelectors = ['field', 'custom_field', 'file'];
+    const selectors = ['type', 'title', 'notes', 'field', 'custom_field', 'file'];
+    if (!record.isPresent || !selector.isPresent)
+        throw new Error('Keeper notation URI missing information about the uid, file, field type, or field key.');
+    if (footer.isPresent)
+        throw new Error('Keeper notation is invalid - extra characters after last section.');
+    if (selector.text == null || !selectors.includes(selector.text[0].toLowerCase()))
+        throw new Error('Keeper notation is invalid - bad selector, must be one of (type, title, notes, field, custom_field, file).');
+    if (selector.text != null && shortSelectors.includes(selector.text[0].toLowerCase()) && selector.parameter != null)
+        throw new Error('Keeper notation is invalid - selectors (type, title, notes) do not have parameters.');
+    if (selector.text != null && fullSelectors.includes(selector.text[0].toLowerCase())) {
+        if (selector.parameter == null)
+            throw new Error('Keeper notation is invalid - selectors (field, custom_field, file) require parameters.');
+        if ('file' == selector.text[0].toLowerCase() && (selector.index1 != null || selector.index2 != null))
+            throw new Error('Keeper notation is invalid - file selectors don\'t accept indexes.');
+        if ('file' != selector.text[0].toLowerCase() && selector.index1 == null && selector.index2 != null)
+            throw new Error('Keeper notation is invalid - two indexes required.');
+        if (selector.index1 != null && !/^\[\d*\]$/.test(selector.index1[1])) {
+            if (!legacyMode)
+                throw new Error('Keeper notation is invalid - first index must be numeric: [n] or [].');
+            if (selector.index2 == null) { // in legacy mode convert /name[middle] to name[][middle]
+                selector.index2 = selector.index1;
+                selector.index1 = ['', '[]'];
+            }
+        }
+    }
+    const result = [prefix, record, selector, footer];
+    return result;
+}
+
+let packageVersion = '16.5.1';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
@@ -2804,6 +3107,182 @@ const getSecrets = (options, recordsFilter) => __awaiter(void 0, void 0, void 0,
     }
     return secrets;
 });
+// tryGetNotationResults returns a string list with all values specified by the notation or empty list on error.
+// It simply logs any errors and continue returning an empty string list on error.
+const tryGetNotationResults = (options, notation) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        return yield getNotationResults(options, notation);
+    }
+    catch (e) {
+        console.error(e);
+    }
+    return [];
+});
+// Notation:
+// keeper://<uid|title>/<field|custom_field>/<type|label>[INDEX][PROPERTY]
+// keeper://<uid|title>/file/<filename|fileUID>
+// Record title, field label, filename sections need to escape the delimiters /[]\ -> \/ \[ \] \\
+//
+// GetNotationResults returns selection of the value(s) from a single field as a string list.
+// Multiple records or multiple fields found results in error.
+// Use record UID or unique record titles and field labels so that notation finds a single record/field.
+//
+// If field has multiple values use indexes - numeric INDEX specifies the position in the value list
+// and PROPERTY specifies a single JSON object property to extract (see examples below for usage)
+// If no indexes are provided - whole value list is returned (same as [])
+// If PROPERTY is provided then INDEX must be provided too - even if it's empty [] which means all
+//
+// Extracting two or more but not all field values simultaneously is not supported - use multiple notation requests.
+//
+// Files are returned as URL safe base64 encoded string of the binary content
+//
+// Note: Integrations and plugins usually return single string value - result[0] or ''
+//
+// Examples:
+//  RECORD_UID/file/filename.ext             => ['URL Safe Base64 encoded binary content']
+//  RECORD_UID/field/url                     => ['127.0.0.1', '127.0.0.2'] or [] if empty
+//  RECORD_UID/field/url[]                   => ['127.0.0.1', '127.0.0.2'] or [] if empty
+//  RECORD_UID/field/url[0]                  => ['127.0.0.1'] or error if empty
+//  RECORD_UID/custom_field/name[first]      => Error, numeric index is required to access field property
+//  RECORD_UID/custom_field/name[][last]     => ['Smith', 'Johnson']
+//  RECORD_UID/custom_field/name[0][last]    => ['Smith']
+//  RECORD_UID/custom_field/phone[0][number] => '555-5555555'
+//  RECORD_UID/custom_field/phone[1][number] => '777-7777777'
+//  RECORD_UID/custom_field/phone[]          => ['{\'number\': \'555-555...\'}', '{\'number\': \'777...\'}']
+//  RECORD_UID/custom_field/phone[0]         => ['{\'number\': \'555-555...\'}']
+// getNotationResults returns a string list with all values specified by the notation or throws an error.
+// Use tryGetNotationResults() to just log errors and continue returning an empty string list on error.
+const getNotationResults = (options, notation) => __awaiter(void 0, void 0, void 0, function* () {
+    var _b, _c, _d, _e;
+    let result = [];
+    const parsedNotation = parseNotation(notation); // prefix, record, selector, footer
+    if (parsedNotation.length < 3)
+        throw new Error(`Invalid notation ${notation}`);
+    if (parsedNotation[1].text == null)
+        throw new Error(`Invalid notation ${notation}`);
+    const recordToken = parsedNotation[1].text[0]; // UID or Title
+    if (parsedNotation[2].text == null)
+        throw new Error(`Invalid notation ${notation}`);
+    const selector = parsedNotation[2].text[0]; // type|title|notes or file|field|custom_field
+    // to minimize traffic - if it looks like a Record UID try to pull a single record
+    let records = [];
+    if (/^[A-Za-z0-9_-]{22}$/.test(recordToken)) {
+        const secrets = yield getSecrets(options, [recordToken]);
+        records = secrets.records;
+        if (records.length > 1)
+            throw new Error(`Notation error - found multiple records with same UID '${recordToken}'`);
+    }
+    // If RecordUID is not found - pull all records and search by title
+    if (records.length < 1) {
+        const secrets = yield getSecrets(options);
+        if ((secrets === null || secrets === void 0 ? void 0 : secrets.records) != null)
+            records = yield findSecretsByTitle(secrets.records, recordToken);
+    }
+    if (records.length > 1)
+        throw new Error(`Notation error - multiple records match record '${recordToken}'`);
+    if (records.length < 1)
+        throw new Error(`Notation error - no records match record '${recordToken}'`);
+    const record = records[0];
+    const parameter = parsedNotation[2].parameter != null ? parsedNotation[2].parameter[0] : '';
+    const index1 = parsedNotation[2].index1 != null ? parsedNotation[2].index1[0] : '';
+    parsedNotation[2].index2 != null ? parsedNotation[2].index2[0] : '';
+    switch (selector.toLowerCase()) {
+        case 'type': {
+            if (((_b = record === null || record === void 0 ? void 0 : record.data) === null || _b === void 0 ? void 0 : _b.type) != null)
+                result.push(record.data.type);
+            break;
+        }
+        case 'title': {
+            if (((_c = record === null || record === void 0 ? void 0 : record.data) === null || _c === void 0 ? void 0 : _c.title) != null)
+                result.push(record.data.title);
+            break;
+        }
+        case 'notes': {
+            if (((_d = record === null || record === void 0 ? void 0 : record.data) === null || _d === void 0 ? void 0 : _d.notes) != null)
+                result.push(record.data.notes);
+            break;
+        }
+        case 'file': {
+            if (parameter == null)
+                throw new Error(`Notation error - Missing required parameter: filename or file UID for files in record '${recordToken}'`);
+            if ((((_e = record === null || record === void 0 ? void 0 : record.files) === null || _e === void 0 ? void 0 : _e.length) || 0) < 1)
+                throw new Error(`Notation error - Record ${recordToken} has no file attachments.`);
+            let files = record.files.filter(x => { var _a; return parameter == ((_a = x === null || x === void 0 ? void 0 : x.data) === null || _a === void 0 ? void 0 : _a.name) || parameter == x.fileUid; });
+            // file searches do not use indexes and rely on unique file names or fileUid
+            const numFiles = (files == null ? 0 : files.length);
+            if (numFiles > 1)
+                throw new Error(`Notation error - Record ${recordToken} has multiple files matching the search criteria '${parameter}'`);
+            if (numFiles < 1)
+                throw new Error(`Notation error - Record ${recordToken} has no files matching the search criteria '${parameter}'`);
+            const contents = yield downloadFile(files[0]);
+            const text = webSafe64FromBytes(contents);
+            result.push(text);
+            break;
+        }
+        case 'field':
+        case 'custom_field': {
+            if (parsedNotation[2].parameter == null)
+                throw new Error('Notation error - Missing required parameter for the field (type or label): ex. /field/type or /custom_field/MyLabel');
+            const fields = (selector.toLowerCase() == 'field' ? record.data.fields :
+                selector.toLowerCase() == 'custom_field' ? record.data.custom : null);
+            if (!fields)
+                throw new Error(`Notation error - Expected /field or /custom_field but found /${selector}`);
+            const flds = fields.filter(x => parameter == x.type || parameter == x.label);
+            if (((flds === null || flds === void 0 ? void 0 : flds.length) || 0) > 1)
+                throw new Error(`Notation error - Record ${recordToken} has multiple fields matching the search criteria '${parameter}'`);
+            if (((flds === null || flds === void 0 ? void 0 : flds.length) || 0) < 1)
+                throw new Error(`Notation error - Record ${recordToken} has no fields matching the search criteria '${parameter}'`);
+            const field = flds[0];
+            //const fieldType = field?.type || ''
+            const idx = tryParseInt(index1, -1); // -1 = full value
+            // valid only if [] or missing - ex. /field/phone or /field/phone[]
+            if (idx == -1 && !(parsedNotation[2].index1 == null || parsedNotation[2].index1[1] == '' || parsedNotation[2].index1[1] == '[]'))
+                throw new Error(`Notation error - Invalid field index ${idx}.`);
+            let values = ((field === null || field === void 0 ? void 0 : field.value) != null ? field.value : []);
+            if (idx >= values.length)
+                throw new Error(`Notation error - Field index out of bounds ${idx} >= ${values.length} for field ${parameter}`);
+            if (idx >= 0) // single index
+                values = [values[idx]];
+            const fullObjValue = (parsedNotation[2].index2 == null || parsedNotation[2].index2[1] == '' || parsedNotation[2].index2[1] == '[]');
+            let objPropertyName = '';
+            if (parsedNotation[2].index2 != null)
+                objPropertyName = parsedNotation[2].index2[0];
+            const res = [];
+            for (let i = 0; i < values.length; i++) {
+                const fldValue = values[i];
+                // Do not throw here to allow for ex. field/name[][middle] to pull [middle] only where present
+                // NB! Not all properties of a value are always required even when the field is marked as required
+                // ex. On a required `name` field only 'first' and 'last' properties are required but not 'middle'
+                // so missing property in a field value is not always an error
+                if (fldValue == null)
+                    console.log('Notation error - Empty field value for field ', parameter); // throw?
+                if (fullObjValue) {
+                    res.push(typeof fldValue === 'string' ? fldValue : JSON.stringify(fldValue));
+                }
+                else if (fldValue != null) {
+                    if (objPropertyName in fldValue) {
+                        let propKey = objPropertyName;
+                        const propValue = fldValue[propKey];
+                        res.push(typeof propValue === 'string' ? propValue : JSON.stringify(propValue));
+                    }
+                    else
+                        console.log(`Notation error - value object has no property '${objPropertyName}'`); // skip
+                }
+                else
+                    console.log(`Notation error - Cannot extract property '${objPropertyName}' from null value.`);
+            }
+            if (res.length != values.length)
+                console.log(`Notation warning - extracted ${res.length} out of ${values.length} values for '${objPropertyName}' property.`);
+            if (res.length > 0)
+                result.push.apply(result, res);
+            break;
+        }
+        default: {
+            throw new Error(`Invalid notation ${notation}`);
+        }
+    }
+    return result;
+});
 const findSecretsByTitle = (records, recordTitle) => __awaiter(void 0, void 0, void 0, function* () {
     return records.filter(record => record.data.title === recordTitle);
 });
@@ -3047,308 +3526,6 @@ class LicenseNumberField extends KeeperRecordField {
     }
 }
 
-/**
- * @deprecated Use `getNotationResults()` instead.
- */
-function getValue(secrets, notation) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
-    const parsedNotation = parseNotation(notation, true); // prefix, record, selector, footer
-    if (parsedNotation.length < 3)
-        throw Error(`Invalid notation ${notation}`);
-    if (parsedNotation[2].text == null)
-        throw Error(`Invalid notation ${notation}`);
-    const selector = parsedNotation[2].text[0]; // type|title|notes or file|field|custom_field
-    if (parsedNotation[1].text == null)
-        throw Error(`Invalid notation ${notation}`);
-    const recordToken = parsedNotation[1].text[0]; // UID or Title
-    const record = secrets.records.find(x => x.recordUid === recordToken || x.data.title === recordToken);
-    if (!record)
-        throw Error(`Record '${recordToken}' not found`);
-    const parameter = (_c = (_b = (_a = parsedNotation[2]) === null || _a === void 0 ? void 0 : _a.parameter) === null || _b === void 0 ? void 0 : _b.at(0)) !== null && _c !== void 0 ? _c : null;
-    const index1 = (_f = (_e = (_d = parsedNotation[2]) === null || _d === void 0 ? void 0 : _d.index1) === null || _e === void 0 ? void 0 : _e.at(0)) !== null && _f !== void 0 ? _f : null;
-    const index2 = (_j = (_h = (_g = parsedNotation[2]) === null || _g === void 0 ? void 0 : _g.index2) === null || _h === void 0 ? void 0 : _h.at(0)) !== null && _j !== void 0 ? _j : null;
-    switch (selector.toLowerCase()) {
-        case 'type': return (_k = record.data.type) !== null && _k !== void 0 ? _k : '';
-        case 'title': return (_l = record.data.title) !== null && _l !== void 0 ? _l : '';
-        case 'notes': return (_m = record.data.notes) !== null && _m !== void 0 ? _m : '';
-        case 'file': {
-            if (parameter == null)
-                throw Error(`Notation error - Missing required parameter: filename or file UID for files in record '${recordToken}'`);
-            if (((_p = (_o = record === null || record === void 0 ? void 0 : record.files) === null || _o === void 0 ? void 0 : _o.length) !== null && _p !== void 0 ? _p : 0) < 1)
-                throw Error(`Notation error - Record ${recordToken} has no file attachments.`);
-            let files = (_q = record.files) !== null && _q !== void 0 ? _q : [];
-            files = files.filter(x => { var _a, _b; return parameter == ((_a = x.data) === null || _a === void 0 ? void 0 : _a.name) || parameter == ((_b = x.data) === null || _b === void 0 ? void 0 : _b.title) || parameter == x.fileUid; });
-            // file searches do not use indexes and rely on unique file names or fileUid
-            if (((_r = files === null || files === void 0 ? void 0 : files.length) !== null && _r !== void 0 ? _r : 0) < 1)
-                throw Error(`Notation error - Record ${recordToken} has no files matching the search criteria '${parameter}'`);
-            // legacy compat. mode
-            return files[0];
-            // if ((files?.length ?? 0) > 1)
-            //     throw Error(`Notation error - Record ${recordToken} has multiple files matching the search criteria '${parameter}'`)
-            // try {
-            //     const contents = await downloadFile(files[0])
-            //     const text = webSafe64FromBytes(contents)
-            //     return text
-            // } catch (e) { throw Error(`Notation error - download failed for Record: ${recordToken}, File: ${parameter}, FileUID: ${files[0].fileUid}, Message: ${e}`)}
-        }
-        case 'field':
-        case 'custom_field': {
-            if (parameter == null)
-                throw Error(`Notation error - Missing required parameter for the field (type or label): ex. /field/type or /custom_field/MyLabel`);
-            const fields = (selector.toLowerCase() == 'field' ? record.data.fields :
-                selector.toLowerCase() == 'custom_field' ? record.data.custom : null);
-            if (!fields)
-                throw new Error(`Notation error - Expected /field or /custom_field but found /${selector}`);
-            // legacy compat mode - find first field only
-            const field = fields.find(x => parameter === x.type || parameter === x.label);
-            if (!field)
-                throw new Error(`Field ${parameter} not found in the record ${record.recordUid}`);
-            // /<type|label>[index1][index2], ex. /url == /url[] == /url[][] == full value
-            const idx = tryParseInt(index1 || '', -1); // -1 = full value
-            // valid only if [] or missing - ex. /field/phone or /field/phone[]
-            if (idx == -1 && !(parsedNotation[2].index1 == null || parsedNotation[2].index1[1] == '' || parsedNotation[2].index1[1] == '[]'))
-                throw new Error(`Notation error - Invalid field index ${idx}.`);
-            let values = ((field === null || field === void 0 ? void 0 : field.value) != null ? field.value : []);
-            if (idx >= values.length)
-                throw new Error(`Notation error - Field index out of bounds ${idx} >= ${values.length} for field '${parameter}' in record '${record.recordUid}'`);
-            if (idx >= 0) // single index
-                values = [values[idx]];
-            const fullObjValue = (parsedNotation[2].index2 == null || parsedNotation[2].index2[1] == '' || parsedNotation[2].index2[1] == '[]');
-            let objPropertyName = '';
-            if (parsedNotation[2].index2 != null)
-                objPropertyName = parsedNotation[2].index2[0];
-            // legacy compatibility mode - no indexes, ex. /url returns value[0]
-            if ((parsedNotation[2].index1 == null || parsedNotation[2].index1[1] == '') &&
-                (parsedNotation[2].index2 == null || parsedNotation[2].index2[1] == ''))
-                return values[0]; // legacy compatibility
-            // return (typeof values[0] === 'string' ? values[0] as string : JSON.stringify(values[0]))
-            // legacy compatibility mode - empty index, ex. /url[] returns ["value"]
-            if ('[]' == ((_u = (_t = (_s = parsedNotation[2]) === null || _s === void 0 ? void 0 : _s.index1) === null || _t === void 0 ? void 0 : _t.at(1)) !== null && _u !== void 0 ? _u : '') && (index2 == null || index2 == ''))
-                return values; // legacy compatibility
-            // return JSON.stringify(values)
-            // should be handled by parseNotation w/ legacyMode=true converts /name[middle] to name[][middle]
-            // legacy compatibility mode - index2 only, ex. /name[first] returns value[0][first]
-            if ((index1 !== null && index1 !== void 0 ? index1 : '') == '' && (index2 !== null && index2 !== void 0 ? index2 : '') != '')
-                return values[0][index2 !== null && index2 !== void 0 ? index2 : '']; // legacy compatibility
-            // return values[0].getProperty(objPropertyName)
-            if (fullObjValue) {
-                return idx >= 0 ? values[0] : values; // legacy compatibility
-            }
-            else if (values[0] != null) {
-                if (objPropertyName in values[0]) {
-                    let propKey = objPropertyName;
-                    const propValue = values[0][propKey];
-                    return propValue; // legacy compatibility
-                }
-                else
-                    throw Error(`Notation error - value object has no property '${objPropertyName}'`);
-            }
-            else
-                throw Error(`Notation error - Cannot extract property '${objPropertyName}' from null value.`);
-        }
-        default: throw Error(`Invalid notation ${notation}`);
-    }
-}
-class NotationSection {
-    constructor(sectionName) {
-        this.section = sectionName;
-        this.isPresent = false;
-        this.startPos = -1;
-        this.endPos = -1;
-        this.text = null;
-        this.parameter = null;
-        this.index1 = null;
-        this.index2 = null;
-    }
-}
-const EscapeChar = '\\'.charCodeAt(0);
-const EscapeChars = '/[]\\'; // /[]\ -> \/ ,\[, \], \\
-// Escape the characters in plaintext sections only - title, label or filename
-function parseSubsection(text, pos, delimiters, escaped = false) {
-    // raw string excludes start delimiter (if '/') but includes end delimiter or both (if '[',']')
-    if (!text || pos < 0 || pos >= text.length)
-        return null;
-    if (!delimiters || delimiters.length > 2)
-        throw new Error(`Notation parser: Internal error - Incorrect delimiters count. Delimiters: '${delimiters}'`);
-    let token = '';
-    let raw = '';
-    while (pos < text.length) {
-        if (escaped && EscapeChar == text.charCodeAt(pos)) {
-            // notation cannot end in single char incomplete escape sequence
-            // and only escape_chars should be escaped
-            if (((pos + 1) >= text.length) || !EscapeChars.includes(text[pos + 1]))
-                throw new Error(`Notation parser: Incorrect escape sequence at position ${pos}`);
-            // copy the properly escaped character
-            token += text[pos + 1];
-            raw += text[pos] + text[pos + 1];
-            pos += 2;
-        }
-        else { // escaped == false || EscapeChar != text.charCodeAt(pos)
-            raw += text[pos]; // delimiter is included in raw text
-            if (delimiters.length == 1) {
-                if (text[pos] == delimiters[0])
-                    break;
-                else
-                    token += text[pos];
-            }
-            else { // 2 delimiters
-                if (raw[0] != delimiters[0])
-                    throw new Error(`Notation parser: Index sections must start with '['`);
-                if (raw.length > 1 && text[pos] == delimiters[0])
-                    throw new Error(`Notation parser: Index sections do not allow extra '[' inside.`);
-                if (!delimiters.includes(text[pos]))
-                    token += text[pos];
-                else if (text[pos] == delimiters[1])
-                    break;
-            }
-            pos++;
-        }
-    }
-    //pos = (pos < text.length) ? pos : text.length - 1
-    if (delimiters.length == 2 && ((raw.length < 2 || raw[0] != delimiters[0] || raw[raw.length - 1] != delimiters[1]) ||
-        (escaped && raw.charCodeAt(raw.length - 2) == EscapeChar)))
-        throw new Error(`Notation parser: Index sections must be enclosed in '[' and ']'`);
-    const result = [token, raw];
-    return result;
-}
-function parseSection(notation, section, pos) {
-    if (!notation)
-        throw new Error(`Keeper notation parsing error - missing notation URI`);
-    const sectionName = section.toLowerCase();
-    const sections = ['prefix', 'record', 'selector', 'footer'];
-    if (!sections.includes(sectionName))
-        throw new Error(`Keeper notation parsing error - unknown section: '${sectionName}'`);
-    const result = new NotationSection(section);
-    result.startPos = pos;
-    switch (sectionName) {
-        case 'prefix': {
-            // prefix 'keeper://' is not mandatory
-            const uriPrefix = 'keeper://';
-            if (notation.toLowerCase().startsWith(uriPrefix)) {
-                result.isPresent = true;
-                result.startPos = 0;
-                result.endPos = uriPrefix.length - 1;
-                result.text = [notation.substring(0, uriPrefix.length), notation.substring(0, uriPrefix.length)];
-            }
-            break;
-        }
-        case 'footer': {
-            // footer should not be present - used only for verification
-            result.isPresent = (pos < notation.length);
-            if (result.isPresent) {
-                result.startPos = pos;
-                result.endPos = notation.length - 1;
-                result.text = [notation.substring(pos), notation.substring(pos)];
-            }
-            break;
-        }
-        case 'record': {
-            // record is always present - either UID or title
-            result.isPresent = (pos < notation.length);
-            if (result.isPresent) {
-                const parsed = parseSubsection(notation, pos, '/', true);
-                if (parsed != null) {
-                    result.startPos = pos;
-                    result.endPos = pos + parsed[1].length - 1;
-                    result.text = parsed;
-                }
-            }
-            break;
-        }
-        case 'selector': {
-            // selector is always present - type|title|notes | field|custom_field|file
-            result.isPresent = (pos < notation.length);
-            if (result.isPresent) {
-                let parsed = parseSubsection(notation, pos, '/', false);
-                if (parsed != null) {
-                    result.startPos = pos;
-                    result.endPos = pos + parsed[1].length - 1;
-                    result.text = parsed;
-                    // selector.parameter - <field type>|<field label> | <file name>
-                    // field/name[0][middle], custom_field/my label[0][middle], file/my file[0]
-                    const longSelectors = ['field', 'custom_field', 'file'];
-                    if (longSelectors.includes(parsed[0].toLowerCase())) {
-                        // TODO: File metadata extraction: ex. filename[1][size] - that requires filename to be escaped
-                        parsed = parseSubsection(notation, result.endPos + 1, '[', true);
-                        if (parsed != null) {
-                            result.parameter = parsed; // <field type>|<field label> | <filename>
-                            const plen = parsed[1].length - (parsed[1].endsWith('[') && !parsed[1].endsWith('\\[') ? 1 : 0);
-                            result.endPos += plen;
-                            parsed = parseSubsection(notation, result.endPos + 1, '[]', true);
-                            if (parsed != null) {
-                                result.index1 = parsed; // selector.index1 [int] or []
-                                result.endPos += parsed[1].length;
-                                parsed = parseSubsection(notation, result.endPos + 1, '[]', true);
-                                if (parsed != null) {
-                                    result.index2 = parsed; // selector.index2 [str]
-                                    result.endPos += parsed[1].length;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        default: throw new Error(`Keeper notation parsing error - unknown section: ${sectionName}`);
-    }
-    return result;
-}
-function parseNotation(notation, legacyMode = false) {
-    if (!notation)
-        throw new Error('Keeper notation is missing or invalid.');
-    // Notation is either plaintext keeper URI format or URL safe base64 string (UTF8)
-    // auto detect format - '/' is not part of base64 URL safe alphabet
-    if (!notation.includes('/')) {
-        try {
-            var bytes = webSafe64ToBytes(notation);
-            var plaintext = new TextDecoder('utf-8').decode(bytes);
-            notation = plaintext;
-        }
-        catch (Exception) {
-            throw new Error('Keeper notation is in invalid format - plaintext URI or URL safe base64 string expected.');
-        }
-    }
-    const prefix = parseSection(notation, 'prefix', 0); // keeper://
-    let pos = (prefix.isPresent ? prefix.endPos + 1 : 0); // prefix is optional
-    const record = parseSection(notation, 'record', pos); // <UID> or <Title>
-    pos = (record.isPresent ? record.endPos + 1 : notation.length); // record is required
-    const selector = parseSection(notation, 'selector', pos); // type|title|notes | field|custom_field|file
-    pos = (selector.isPresent ? selector.endPos + 1 : notation.length); // selector is required, indexes are optional
-    const footer = parseSection(notation, 'footer', pos); // Any text after the last section
-    // verify parsed query
-    // prefix is optional, record UID/Title and selector are mandatory
-    const shortSelectors = ['type', 'title', 'notes'];
-    const fullSelectors = ['field', 'custom_field', 'file'];
-    const selectors = ['type', 'title', 'notes', 'field', 'custom_field', 'file'];
-    if (!record.isPresent || !selector.isPresent)
-        throw new Error('Keeper notation URI missing information about the uid, file, field type, or field key.');
-    if (footer.isPresent)
-        throw new Error('Keeper notation is invalid - extra characters after last section.');
-    if (selector.text == null || !selectors.includes(selector.text[0].toLowerCase()))
-        throw new Error('Keeper notation is invalid - bad selector, must be one of (type, title, notes, field, custom_field, file).');
-    if (selector.text != null && shortSelectors.includes(selector.text[0].toLowerCase()) && selector.parameter != null)
-        throw new Error('Keeper notation is invalid - selectors (type, title, notes) do not have parameters.');
-    if (selector.text != null && fullSelectors.includes(selector.text[0].toLowerCase())) {
-        if (selector.parameter == null)
-            throw new Error('Keeper notation is invalid - selectors (field, custom_field, file) require parameters.');
-        if ('file' == selector.text[0].toLowerCase() && (selector.index1 != null || selector.index2 != null))
-            throw new Error('Keeper notation is invalid - file selectors don\'t accept indexes.');
-        if ('file' != selector.text[0].toLowerCase() && selector.index1 == null && selector.index2 != null)
-            throw new Error('Keeper notation is invalid - two indexes required.');
-        if (selector.index1 != null && !/^\[\d*\]$/.test(selector.index1[1])) {
-            if (!legacyMode)
-                throw new Error('Keeper notation is invalid - first index must be numeric: [n] or [].');
-            if (selector.index2 == null) { // in legacy mode convert /name[middle] to name[][middle]
-                selector.index2 = selector.index1;
-                selector.index1 = ['', '[]'];
-            }
-        }
-    }
-    const result = [prefix, record, selector, footer];
-    return result;
-}
-
 const localConfigStorage = (configName) => {
     const readStorage = () => {
         if (!configName) {
@@ -3462,6 +3639,7 @@ exports.findSecretsByTitle = findSecretsByTitle;
 exports.generatePassword = generatePassword;
 exports.generateTransmissionKey = generateTransmissionKey;
 exports.getClientId = getClientId;
+exports.getNotationResults = getNotationResults;
 exports.getSecretByTitle = getSecretByTitle;
 exports.getSecrets = getSecrets;
 exports.getSecretsByTitle = getSecretsByTitle;
@@ -3473,6 +3651,7 @@ exports.initializeStorage = initializeStorage;
 exports.loadJsonConfig = loadJsonConfig;
 exports.localConfigStorage = localConfigStorage;
 exports.parseNotation = parseNotation;
+exports.tryGetNotationResults = tryGetNotationResults;
 exports.updateSecret = updateSecret;
 exports.uploadFile = uploadFile;
 //# sourceMappingURL=index.cjs.js.map

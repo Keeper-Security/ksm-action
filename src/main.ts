@@ -71,7 +71,8 @@ const run = async (): Promise<void> => {
         const inputs = parseSecretsInputs(core.getMultilineInput('secrets'))
 
         core.debug('Retrieving Secrets from KSM...')
-        const secrets = await getSecrets({storage: loadJsonConfig(config)}, getRecordUids(inputs))
+        const options = {storage: loadJsonConfig(config)}
+        const secrets = await getSecrets(options, getRecordUids(inputs))
         core.debug(`Retrieved [${secrets.records.length}] secrets`)
 
         if (secrets.warnings) {

@@ -9,7 +9,7 @@ inputs:
     required: true
     description: 'A list of secrets to retrieve from Keeper Vault'
 runs:
-  using: 'node12'
+  using: 'node16'
   main: 'dist/index.js'
 
 branding:

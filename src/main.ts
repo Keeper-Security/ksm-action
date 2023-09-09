@@ -45,14 +45,6 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
     return results
 }
 
-export const getRecordUids = (inputs: SecretsInput[]): string[] => {
-    const set = new Set<string>()
-    for (const input of inputs) {
-        set.add(input.notation.split('/')[0])
-    }
-    return Array.from(set)
-}
-
 const downloadSecretFile = async (file: KeeperFile, destination: string): Promise<void> => {
     const fileData = await downloadFile(file)
     fs.writeFileSync(destination, fileData)
@@ -72,7 +64,7 @@ const run = async (): Promise<void> => {
 
         core.debug('Retrieving Secrets from KSM...')
         const options = {storage: loadJsonConfig(config)}
-        const secrets = await getSecrets(options, getRecordUids(inputs))
+        const secrets = await getSecrets(options)
         core.debug(`Retrieved [${secrets.records.length}] secrets`)
 
         if (secrets.warnings) {

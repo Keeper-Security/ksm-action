@@ -39,7 +39,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getRecordUids = exports.parseSecretsInputs = void 0;
+exports.parseSecretsInputs = void 0;
 const core = __importStar(__nccwpck_require__(186));
 const fs = __importStar(__nccwpck_require__(147));
 const secrets_manager_core_1 = __nccwpck_require__(13);
@@ -78,14 +78,6 @@ const parseSecretsInputs = (inputs) => {
     return results;
 };
 exports.parseSecretsInputs = parseSecretsInputs;
-const getRecordUids = (inputs) => {
-    const set = new Set();
-    for (const input of inputs) {
-        set.add(input.notation.split('/')[0]);
-    }
-    return Array.from(set);
-};
-exports.getRecordUids = getRecordUids;
 const downloadSecretFile = (file, destination) => __awaiter(void 0, void 0, void 0, function* () {
     const fileData = yield (0, secrets_manager_core_1.downloadFile)(file);
     fs.writeFileSync(destination, fileData);
@@ -101,7 +93,7 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         const inputs = (0, exports.parseSecretsInputs)(core.getMultilineInput('secrets'));
         core.debug('Retrieving Secrets from KSM...');
         const options = { storage: (0, secrets_manager_core_1.loadJsonConfig)(config) };
-        const secrets = yield (0, secrets_manager_core_1.getSecrets)(options, (0, exports.getRecordUids)(inputs));
+        const secrets = yield (0, secrets_manager_core_1.getSecrets)(options);
         core.debug(`Retrieved [${secrets.records.length}] secrets`);
         if (secrets.warnings) {
             // Print warnings if the backend find issues with the requested records

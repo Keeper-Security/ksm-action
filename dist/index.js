@@ -49,11 +49,28 @@ var DestinationType;
     DestinationType[DestinationType["environment"] = 1] = "environment";
     DestinationType[DestinationType["file"] = 2] = "file";
 })(DestinationType || (DestinationType = {}));
+const splitInput = (text) => {
+    const n = text.lastIndexOf('>');
+    if (n < 0)
+        return [text, ''];
+    const notation = text.substring(0, n);
+    const destination = text.substring(n + 1);
+    return [notation.trimEnd(), destination.trimStart()];
+};
 const parseSecretsInputs = (inputs) => {
     const results = [];
     for (const input of inputs) {
         core.debug(`inputParts=[${input}]`);
-        const inputParts = input.split(/\s*>\s*/);
+        const inputParts = splitInput(input);
+        let [uid, selector] = ['', ''];
+        try {
+            const notation = (0, secrets_manager_core_1.parseNotation)(inputParts[0]);
+            uid = notation[1].text ? notation[1].text[0] : '';
+            selector = notation[2].text ? notation[2].text[0] : '';
+        }
+        catch (error) {
+            core.error(`Failed to parse KSM Notation: ${error instanceof Error ? error.message : ''}`);
+        }
         let destinationType = DestinationType.output;
         let destination = inputParts[1];
         core.debug(`destination=[${destination}]`);
@@ -65,11 +82,13 @@ const parseSecretsInputs = (inputs) => {
             destinationType = DestinationType.file;
             destination = destination.slice(5);
         }
-        if (inputParts[0].split('/')[1] === 'file') {
+        if (selector === 'file') {
             destinationType = DestinationType.file;
         }
-        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}]`);
+        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}], secret=[${uid}]`);
         results.push({
+            uid,
+            selector,
             notation: inputParts[0],
             destination,
             destinationType
@@ -81,7 +100,7 @@ exports.parseSecretsInputs = parseSecretsInputs;
 const getRecordUids = (inputs) => {
     const set = new Set();
     for (const input of inputs) {
-        set.add(input.notation.split('/')[0]);
+        set.add(input.uid);
     }
     return Array.from(set);
 };
@@ -101,7 +120,20 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         const inputs = (0, exports.parseSecretsInputs)(core.getMultilineInput('secrets'));
         core.debug('Retrieving Secrets from KSM...');
         const options = { storage: (0, secrets_manager_core_1.loadJsonConfig)(config) };
-        const secrets = yield (0, secrets_manager_core_1.getSecrets)(options, (0, exports.getRecordUids)(inputs));
+        const rxUid = new RegExp('^[A-Za-z0-9_-]{22}$');
+        const recordUids = (0, exports.getRecordUids)(inputs);
+        const hasTitles = recordUids.some(function (e) {
+            return !rxUid.test(e);
+        });
+        let uidFilter = recordUids && !hasTitles ? recordUids : undefined;
+        let secrets = yield (0, secrets_manager_core_1.getSecrets)(options, uidFilter);
+        // there's a slight chance a valid title to match a recordUID (22 url-safe base64 chars)
+        // or a missing record or record not shared to the KSM App - we need to pull all records
+        if (uidFilter && secrets.records.length < recordUids.length) {
+            uidFilter = undefined;
+            core.debug(`KSM Didn't get expected num records - requesting all (search by title or missing UID /not shared to the app/)`);
+            secrets = yield (0, secrets_manager_core_1.getSecrets)(options, uidFilter);
+        }
         core.debug(`Retrieved [${secrets.records.length}] secrets`);
         if (secrets.warnings) {
             // Print warnings if the backend find issues with the requested records
@@ -1905,7 +1937,7 @@ exports.checkBypass = checkBypass;
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 16.5.1 - February 18, 2023 00:31:34 */
+/* Version: 16.6.1 - July 25, 2023 18:30:06 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -2289,15 +2321,14 @@ const importKey = (keyId, key, storage) => __awaiter(void 0, void 0, void 0, fun
         yield storage.saveBytes(keyId, key);
     }
 });
-const encrypt = (data, keyId, storage) => __awaiter(void 0, void 0, void 0, function* () {
+const encrypt = (data, keyId, storage, useCBC) => __awaiter(void 0, void 0, void 0, function* () {
     const key = yield loadKey(keyId, storage);
-    const iv = getRandomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return Buffer.concat([iv, encrypted, tag]);
+    return _encrypt(data, key, useCBC);
 });
-const _encrypt = (data, key) => {
+const _encrypt = (data, key, useCBC) => {
+    if (useCBC) {
+        return _encryptCBC(data, key);
+    }
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
@@ -2305,7 +2336,16 @@ const _encrypt = (data, key) => {
     const result = Buffer.concat([iv, encrypted, tag]);
     return Promise.resolve(result);
 };
-const _decrypt = (data, key) => {
+const _encryptCBC = (data, key) => __awaiter(void 0, void 0, void 0, function* () {
+    let iv = crypto.randomBytes(16);
+    let cipher = crypto.createCipheriv("aes-256-cbc", key, iv).setAutoPadding(true);
+    let encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
+    return Buffer.concat([iv, encrypted]);
+});
+const _decrypt = (data, key, useCBC) => {
+    if (useCBC) {
+        return _decryptCBC(data, key);
+    }
     const iv = data.subarray(0, 12);
     const encrypted = data.subarray(12, data.length - 16);
     const tag = data.subarray(data.length - 16);
@@ -2313,9 +2353,15 @@ const _decrypt = (data, key) => {
     cipher.setAuthTag(tag);
     return Promise.resolve(Buffer.concat([cipher.update(encrypted), cipher.final()]));
 };
-const unwrap = (key, keyId, unwrappingKeyId, storage, memoryOnly) => __awaiter(void 0, void 0, void 0, function* () {
+const _decryptCBC = (data, key) => __awaiter(void 0, void 0, void 0, function* () {
+    let iv = data.subarray(0, 16);
+    let encrypted = data.subarray(16);
+    let cipher = crypto.createDecipheriv("aes-256-cbc", key, iv).setAutoPadding(true);
+    return Buffer.concat([cipher.update(encrypted), cipher.final()]);
+});
+const unwrap = (key, keyId, unwrappingKeyId, storage, memoryOnly, useCBC) => __awaiter(void 0, void 0, void 0, function* () {
     const unwrappingKey = yield loadKey(unwrappingKeyId, storage);
-    const unwrappedKey = yield _decrypt(key, unwrappingKey);
+    const unwrappedKey = yield _decrypt(key, unwrappingKey, useCBC);
     keyCache[keyId] = unwrappedKey;
     if (memoryOnly) {
         return;
@@ -2324,9 +2370,9 @@ const unwrap = (key, keyId, unwrappingKeyId, storage, memoryOnly) => __awaiter(v
         yield storage.saveBytes(keyId, unwrappedKey);
     }
 });
-const decrypt = (data, keyId, storage) => __awaiter(void 0, void 0, void 0, function* () {
+const decrypt = (data, keyId, storage, useCBC) => __awaiter(void 0, void 0, void 0, function* () {
     const key = yield loadKey(keyId, storage);
-    return _decrypt(data, key);
+    return _decrypt(data, key, useCBC);
 });
 function hash(data) {
     const hash = crypto.createHmac('sha512', data).update('KEEPER_SECRETS_MANAGER_CLIENT_ID').digest();
@@ -2467,9 +2513,6 @@ const nodePlatform = {
     getRandomCharacterInCharset: getRandomCharacterInCharset
 };
 
-/**
- * @deprecated Use `getNotationResults()` instead.
- */
 function getValue(secrets, notation) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
     const parsedNotation = parseNotation(notation, true); // prefix, record, selector, footer
@@ -2769,9 +2812,9 @@ function parseNotation(notation, legacyMode = false) {
     return result;
 }
 
-let packageVersion = '16.5.1';
+let packageVersion = '16.6.1';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
-const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
+const KEY_SERVER_PUBLIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
 const KEY_CLIENT_KEY = 'clientKey'; // The key that is used to identify the client before public key
 const KEY_APP_KEY = 'appKey'; // The application key with which all secrets are encrypted
@@ -2801,7 +2844,7 @@ const initialize = (pkgVersion) => {
         return keys;
     }, {});
 };
-const prepareGetPayload = (storage, recordsFilter) => __awaiter(void 0, void 0, void 0, function* () {
+const prepareGetPayload = (storage, queryOptions) => __awaiter(void 0, void 0, void 0, function* () {
     const clientId = yield storage.getString(KEY_CLIENT_ID);
     if (!clientId) {
         throw new Error('Client Id is missing from the configuration');
@@ -2815,8 +2858,11 @@ const prepareGetPayload = (storage, recordsFilter) => __awaiter(void 0, void 0, 
         const publicKey = yield exports.platform.exportPublicKey(KEY_PRIVATE_KEY, storage);
         payload.publicKey = exports.platform.bytesToBase64(publicKey);
     }
-    if (recordsFilter) {
-        payload.requestedRecords = recordsFilter;
+    if (queryOptions === null || queryOptions === void 0 ? void 0 : queryOptions.recordsFilter) {
+        payload.requestedRecords = queryOptions.recordsFilter;
+    }
+    if (queryOptions === null || queryOptions === void 0 ? void 0 : queryOptions.foldersFilter) {
+        payload.requestedFolders = queryOptions.foldersFilter;
     }
     return payload;
 });
@@ -2846,7 +2892,19 @@ const prepareDeletePayload = (storage, recordUids) => __awaiter(void 0, void 0, 
         recordUids: recordUids
     };
 });
-const prepareCreatePayload = (storage, folderUid, recordData) => __awaiter(void 0, void 0, void 0, function* () {
+const prepareDeleteFolderPayload = (storage, folderUids, forceDeletion = false) => __awaiter(void 0, void 0, void 0, function* () {
+    const clientId = yield storage.getString(KEY_CLIENT_ID);
+    if (!clientId) {
+        throw new Error('Client Id is missing from the configuration');
+    }
+    return {
+        clientVersion: 'ms' + packageVersion,
+        clientId: clientId,
+        folderUids: folderUids,
+        forceDeletion: forceDeletion
+    };
+});
+const prepareCreatePayload = (storage, createOptions, recordData) => __awaiter(void 0, void 0, void 0, function* () {
     const clientId = yield storage.getString(KEY_CLIENT_ID);
     if (!clientId) {
         throw new Error('Client Id is missing from the configuration');
@@ -2860,15 +2918,54 @@ const prepareCreatePayload = (storage, folderUid, recordData) => __awaiter(void 
     const recordUid = exports.platform.getRandomBytes(16);
     const encryptedRecord = yield exports.platform.encryptWithKey(recordBytes, recordKey);
     const encryptedRecordKey = yield exports.platform.publicEncrypt(recordKey, ownerPublicKey);
-    const encryptedFolderKey = yield exports.platform.encrypt(recordKey, folderUid);
+    const encryptedFolderKey = yield exports.platform.encrypt(recordKey, createOptions.folderUid);
     return {
         clientVersion: 'ms' + packageVersion,
         clientId: clientId,
         recordUid: webSafe64FromBytes(recordUid),
         recordKey: exports.platform.bytesToBase64(encryptedRecordKey),
-        folderUid: folderUid,
+        folderUid: createOptions.folderUid,
         folderKey: exports.platform.bytesToBase64(encryptedFolderKey),
-        data: webSafe64FromBytes(encryptedRecord)
+        data: webSafe64FromBytes(encryptedRecord),
+        subFolderUid: createOptions.subFolderUid
+    };
+});
+const prepareCreateFolderPayload = (storage, createOptions, folderName) => __awaiter(void 0, void 0, void 0, function* () {
+    const clientId = yield storage.getString(KEY_CLIENT_ID);
+    if (!clientId) {
+        throw new Error('Client Id is missing from the configuration');
+    }
+    const folderDataBytes = exports.platform.stringToBytes(JSON.stringify({
+        name: folderName
+    }));
+    const folderKey = exports.platform.getRandomBytes(32);
+    const folderUid = exports.platform.getRandomBytes(16);
+    const encryptedFolderData = yield exports.platform.encryptWithKey(folderDataBytes, folderKey, true);
+    const encryptedFolderKey = yield exports.platform.encrypt(folderKey, createOptions.folderUid, undefined, true);
+    return {
+        clientVersion: 'ms' + packageVersion,
+        clientId: clientId,
+        folderUid: webSafe64FromBytes(folderUid),
+        sharedFolderUid: createOptions.folderUid,
+        sharedFolderKey: webSafe64FromBytes(encryptedFolderKey),
+        data: webSafe64FromBytes(encryptedFolderData),
+        parentUid: createOptions.subFolderUid
+    };
+});
+const prepareUpdateFolderPayload = (storage, folderUid, folderName) => __awaiter(void 0, void 0, void 0, function* () {
+    const clientId = yield storage.getString(KEY_CLIENT_ID);
+    if (!clientId) {
+        throw new Error('Client Id is missing from the configuration');
+    }
+    const folderDataBytes = exports.platform.stringToBytes(JSON.stringify({
+        name: folderName
+    }));
+    const encryptedFolderData = yield exports.platform.encrypt(folderDataBytes, folderUid, undefined, true);
+    return {
+        clientVersion: 'ms' + packageVersion,
+        clientId: clientId,
+        folderUid: folderUid,
+        data: webSafe64FromBytes(encryptedFolderData)
     };
 });
 const prepareFileUploadPayload = (storage, ownerRecord, file) => __awaiter(void 0, void 0, void 0, function* () {
@@ -2928,7 +3025,7 @@ const postFunction = (url, transmissionKey, payload, allowUnverifiedCertificate)
 });
 const generateTransmissionKey = (storage) => __awaiter(void 0, void 0, void 0, function* () {
     const transmissionKey = exports.platform.getRandomBytes(32);
-    const keyNumberString = yield storage.getString(KEY_SERVER_PUBIC_KEY_ID);
+    const keyNumberString = yield storage.getString(KEY_SERVER_PUBLIC_KEY_ID);
     const keyNumber = keyNumberString ? Number(keyNumberString) : 7;
     const keeperPublicKey = keeperPublicKeys[keyNumber];
     if (!keeperPublicKey) {
@@ -2965,7 +3062,7 @@ const postQuery = (options, path, payload) => __awaiter(void 0, void 0, void 0, 
                 try {
                     const errorObj = JSON.parse(errorMessage);
                     if (errorObj.error === 'key') {
-                        yield options.storage.saveString(KEY_SERVER_PUBIC_KEY_ID, errorObj.key_id.toString());
+                        yield options.storage.saveString(KEY_SERVER_PUBLIC_KEY_ID, errorObj.key_id.toString());
                         continue;
                     }
                 }
@@ -2987,8 +3084,11 @@ const decryptRecord = (record, storage) => __awaiter(void 0, void 0, void 0, fun
     const keeperRecord = {
         recordUid: record.recordUid,
         data: JSON.parse(exports.platform.bytesToString(decryptedRecord)),
-        revision: record.revision
+        revision: record.revision,
     };
+    if (record.innerFolderUid) {
+        keeperRecord.innerFolderUid = record.innerFolderUid;
+    }
     if (record.files) {
         keeperRecord.files = [];
         for (const file of record.files) {
@@ -3004,9 +3104,9 @@ const decryptRecord = (record, storage) => __awaiter(void 0, void 0, void 0, fun
     }
     return keeperRecord;
 });
-const fetchAndDecryptSecrets = (options, recordsFilter) => __awaiter(void 0, void 0, void 0, function* () {
+const fetchAndDecryptSecrets = (options, queryOptions) => __awaiter(void 0, void 0, void 0, function* () {
     const storage = options.storage;
-    const payload = yield prepareGetPayload(storage, recordsFilter);
+    const payload = yield prepareGetPayload(storage, queryOptions);
     const responseData = yield postQuery(options, 'get_secret', payload);
     const response = JSON.parse(exports.platform.bytesToString(responseData));
     const records = [];
@@ -3049,7 +3149,55 @@ const fetchAndDecryptSecrets = (options, recordsFilter) => __awaiter(void 0, voi
     if (response.warnings && response.warnings.length > 0) {
         secrets.warnings = response.warnings;
     }
+    if (response.extra && Object.keys(response.extra).length > 0) {
+        secrets.extra = response.extra;
+    }
     return { secrets, justBound };
+});
+const getSharedFolderUid = (folders, parent) => {
+    while (true) {
+        const parentFolder = folders.find(x => x.folderUid === parent);
+        if (!parentFolder) {
+            return undefined;
+        }
+        if (parentFolder.parent) {
+            parent = parentFolder.parent;
+        }
+        else {
+            return parent;
+        }
+    }
+};
+const fetchAndDecryptFolders = (options) => __awaiter(void 0, void 0, void 0, function* () {
+    const storage = options.storage;
+    const payload = yield prepareGetPayload(storage);
+    const responseData = yield postQuery(options, 'get_folders', payload);
+    const response = JSON.parse(exports.platform.bytesToString(responseData));
+    const folders = [];
+    if (response.folders) {
+        for (const folder of response.folders) {
+            let decryptedData;
+            const decryptedFolder = {
+                folderUid: folder.folderUid
+            };
+            if (folder.parent) {
+                decryptedFolder.parentUid = folder.parent;
+                const sharedFolderUid = getSharedFolderUid(response.folders, folder.parent);
+                if (!sharedFolderUid) {
+                    throw new Error('Folder data inconsistent - unable to locate shared folder');
+                }
+                yield exports.platform.unwrap(exports.platform.base64ToBytes(folder.folderKey), folder.folderUid, sharedFolderUid, storage, true, true);
+                decryptedData = yield exports.platform.decrypt(exports.platform.base64ToBytes(folder.data), folder.folderUid, storage, true);
+            }
+            else {
+                yield exports.platform.unwrap(exports.platform.base64ToBytes(folder.folderKey), folder.folderUid, KEY_APP_KEY, storage, true);
+                decryptedData = yield exports.platform.decrypt(exports.platform.base64ToBytes(folder.data), folder.folderUid, storage, true);
+            }
+            decryptedFolder.name = JSON.parse(exports.platform.bytesToString(decryptedData))['name'];
+            folders.push(decryptedFolder);
+        }
+    }
+    return folders;
 });
 const getClientId = (clientKey) => __awaiter(void 0, void 0, void 0, function* () {
     const clientKeyHash = yield exports.platform.hash(webSafe64ToBytes(clientKey), CLIENT_ID_HASH_TAG);
@@ -3095,17 +3243,27 @@ const initializeStorage = (storage, oneTimeToken, hostName) => __awaiter(void 0,
     yield exports.platform.generatePrivateKey(KEY_PRIVATE_KEY, storage);
 });
 const getSecrets = (options, recordsFilter) => __awaiter(void 0, void 0, void 0, function* () {
+    const queryOptions = recordsFilter
+        ? { recordsFilter: recordsFilter }
+        : undefined;
+    return getSecrets2(options, queryOptions);
+});
+const getSecrets2 = (options, queryOptions) => __awaiter(void 0, void 0, void 0, function* () {
     exports.platform.cleanKeyCache();
-    const { secrets, justBound } = yield fetchAndDecryptSecrets(options, recordsFilter);
+    const { secrets, justBound } = yield fetchAndDecryptSecrets(options, queryOptions);
     if (justBound) {
         try {
-            yield fetchAndDecryptSecrets(options, recordsFilter);
+            yield fetchAndDecryptSecrets(options, queryOptions);
         }
         catch (e) {
             console.error(e);
         }
     }
     return secrets;
+});
+const getFolders = (options) => __awaiter(void 0, void 0, void 0, function* () {
+    exports.platform.cleanKeyCache();
+    return yield fetchAndDecryptFolders(options);
 });
 // tryGetNotationResults returns a string list with all values specified by the notation or empty list on error.
 // It simply logs any errors and continue returning an empty string list on error.
@@ -3304,16 +3462,43 @@ const updateSecret = (options, record) => __awaiter(void 0, void 0, void 0, func
 const deleteSecret = (options, recordUids) => __awaiter(void 0, void 0, void 0, function* () {
     const payload = yield prepareDeletePayload(options.storage, recordUids);
     const responseData = yield postQuery(options, 'delete_secret', payload);
-    const response = JSON.parse(exports.platform.bytesToString(responseData));
-    return response;
+    return JSON.parse(exports.platform.bytesToString(responseData));
+});
+const deleteFolder = (options, folderUids, forceDeletion) => __awaiter(void 0, void 0, void 0, function* () {
+    const payload = yield prepareDeleteFolderPayload(options.storage, folderUids, forceDeletion);
+    const responseData = yield postQuery(options, 'delete_folder', payload);
+    return JSON.parse(exports.platform.bytesToString(responseData));
 });
 const createSecret = (options, folderUid, recordData) => __awaiter(void 0, void 0, void 0, function* () {
     if (!exports.platform.hasKeysCached()) {
         yield getSecrets(options); // need to warm up keys cache before posting a record
     }
-    const payload = yield prepareCreatePayload(options.storage, folderUid, recordData);
+    const payload = yield prepareCreatePayload(options.storage, { folderUid: folderUid }, recordData);
     yield postQuery(options, 'create_secret', payload);
     return payload.recordUid;
+});
+const createSecret2 = (options, createOptions, recordData) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!exports.platform.hasKeysCached()) {
+        yield getFolders(options); // need to warm up keys cache before posting a record
+    }
+    const payload = yield prepareCreatePayload(options.storage, createOptions, recordData);
+    yield postQuery(options, 'create_secret', payload);
+    return payload.recordUid;
+});
+const createFolder = (options, createOptions, folderName) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!exports.platform.hasKeysCached()) {
+        yield getSecrets(options); // need to warm up keys cache before posting a record
+    }
+    const payload = yield prepareCreateFolderPayload(options.storage, createOptions, folderName);
+    yield postQuery(options, 'create_folder', payload);
+    return payload.folderUid;
+});
+const updateFolder = (options, folderUid, folderName) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!exports.platform.hasKeysCached()) {
+        yield getSecrets(options); // need to warm up keys cache before posting a record
+    }
+    const payload = yield prepareUpdateFolderPayload(options.storage, folderUid, folderName);
+    yield postQuery(options, 'update_folder', payload);
 });
 const downloadFile = (file) => __awaiter(void 0, void 0, void 0, function* () {
     const fileResponse = yield exports.platform.get(file.url, {});
@@ -3511,7 +3696,7 @@ class HostField extends KeeperRecordField {
         this.value = [value];
     }
 }
-class AddresseField extends KeeperRecordField {
+class AddressField extends KeeperRecordField {
     constructor(value) {
         super();
         this.type = 'address';
@@ -3522,6 +3707,69 @@ class LicenseNumberField extends KeeperRecordField {
     constructor(value) {
         super();
         this.type = 'licenseNumber';
+        this.value = [value];
+    }
+}
+class RecordRefField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'recordRef';
+        this.value = [value];
+    }
+}
+class ScheduleField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'schedule';
+        this.value = [value];
+    }
+}
+class ScriptField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'script';
+        this.value = [value];
+    }
+}
+class DirectoryTypeField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'directoryType';
+        this.value = [value];
+    }
+}
+class DatabaseTypeField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'databaseType';
+        this.value = [value];
+    }
+}
+class PamHostnameField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'pamHostname';
+        this.value = [value];
+    }
+}
+class PamResourceField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'pamResources';
+        this.value = [value];
+    }
+}
+class CheckboxField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'checkbox';
+        this.value = [value];
+    }
+}
+class PasskeyField extends KeeperRecordField {
+    constructor(value) {
+        super();
+        this.type = 'passkey';
         this.value = [value];
     }
 }
@@ -3601,12 +3849,15 @@ connectPlatform(nodePlatform);
 initialize();
 
 exports.AccountNumberField = AccountNumberField;
+exports.AddressField = AddressField;
 exports.AddressRefField = AddressRefField;
-exports.AddresseField = AddresseField;
 exports.BankAccountField = BankAccountField;
 exports.BirthDateField = BirthDateField;
 exports.CardRefField = CardRefField;
+exports.CheckboxField = CheckboxField;
+exports.DatabaseTypeField = DatabaseTypeField;
 exports.DateField = DateField;
+exports.DirectoryTypeField = DirectoryTypeField;
 exports.EmailField = EmailField;
 exports.ExpirationDateField = ExpirationDateField;
 exports.FileRefField = FileRefField;
@@ -3618,10 +3869,16 @@ exports.LoginField = LoginField;
 exports.MultilineField = MultilineField;
 exports.NameField = NameField;
 exports.OneTimeCodeField = OneTimeCodeField;
+exports.PamHostnameField = PamHostnameField;
+exports.PamResourceField = PamResourceField;
+exports.PasskeyField = PasskeyField;
 exports.PasswordField = PasswordField;
 exports.PaymentCardField = PaymentCardField;
 exports.PhoneField = PhoneField;
 exports.PinCodeField = PinCodeField;
+exports.RecordRefField = RecordRefField;
+exports.ScheduleField = ScheduleField;
+exports.ScriptField = ScriptField;
 exports.SecretField = SecretField;
 exports.SecureNoteField = SecureNoteField;
 exports.SecurityQuestionField = SecurityQuestionField;
@@ -3630,7 +3887,10 @@ exports.UrlField = UrlField;
 exports.addCustomField = addCustomField;
 exports.cachingPostFunction = cachingPostFunction;
 exports.connectPlatform = connectPlatform;
+exports.createFolder = createFolder;
 exports.createSecret = createSecret;
+exports.createSecret2 = createSecret2;
+exports.deleteFolder = deleteFolder;
 exports.deleteSecret = deleteSecret;
 exports.downloadFile = downloadFile;
 exports.downloadThumbnail = downloadThumbnail;
@@ -3639,9 +3899,11 @@ exports.findSecretsByTitle = findSecretsByTitle;
 exports.generatePassword = generatePassword;
 exports.generateTransmissionKey = generateTransmissionKey;
 exports.getClientId = getClientId;
+exports.getFolders = getFolders;
 exports.getNotationResults = getNotationResults;
 exports.getSecretByTitle = getSecretByTitle;
 exports.getSecrets = getSecrets;
+exports.getSecrets2 = getSecrets2;
 exports.getSecretsByTitle = getSecretsByTitle;
 exports.getTotpCode = getTotpCode;
 exports.getValue = getValue;
@@ -3652,6 +3914,7 @@ exports.loadJsonConfig = loadJsonConfig;
 exports.localConfigStorage = localConfigStorage;
 exports.parseNotation = parseNotation;
 exports.tryGetNotationResults = tryGetNotationResults;
+exports.updateFolder = updateFolder;
 exports.updateSecret = updateSecret;
 exports.uploadFile = uploadFile;
 //# sourceMappingURL=index.cjs.js.map

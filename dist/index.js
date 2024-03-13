@@ -49,11 +49,28 @@ var DestinationType;
     DestinationType[DestinationType["environment"] = 1] = "environment";
     DestinationType[DestinationType["file"] = 2] = "file";
 })(DestinationType || (DestinationType = {}));
+const splitInput = (text) => {
+    const n = text.lastIndexOf('>');
+    if (n < 0)
+        return [text, ''];
+    const notation = text.substring(0, n);
+    const destination = text.substring(n + 1);
+    return [notation.trimEnd(), destination.trimStart()];
+};
 const parseSecretsInputs = (inputs) => {
     const results = [];
     for (const input of inputs) {
         core.debug(`inputParts=[${input}]`);
-        const inputParts = input.split(/\s*>\s*/);
+        const inputParts = splitInput(input);
+        let [uid, selector] = ['', ''];
+        try {
+            const notation = (0, secrets_manager_core_1.parseNotation)(inputParts[0]);
+            uid = notation[1].text ? notation[1].text[0] : '';
+            selector = notation[2].text ? notation[2].text[0] : '';
+        }
+        catch (error) {
+            core.error(`Failed to parse KSM Notation: ${error instanceof Error ? error.message : ''}`);
+        }
         let destinationType = DestinationType.output;
         let destination = inputParts[1];
         core.debug(`destination=[${destination}]`);
@@ -65,11 +82,13 @@ const parseSecretsInputs = (inputs) => {
             destinationType = DestinationType.file;
             destination = destination.slice(5);
         }
-        if (inputParts[0].split('/')[1] === 'file') {
+        if (selector === 'file') {
             destinationType = DestinationType.file;
         }
-        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}]`);
+        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}], secret=[${uid}]`);
         results.push({
+            uid,
+            selector,
             notation: inputParts[0],
             destination,
             destinationType
@@ -81,7 +100,7 @@ exports.parseSecretsInputs = parseSecretsInputs;
 const getRecordUids = (inputs) => {
     const set = new Set();
     for (const input of inputs) {
-        set.add(input.notation.split('/')[0]);
+        set.add(input.uid);
     }
     return Array.from(set);
 };
@@ -101,7 +120,20 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         const inputs = (0, exports.parseSecretsInputs)(core.getMultilineInput('secrets'));
         core.debug('Retrieving Secrets from KSM...');
         const options = { storage: (0, secrets_manager_core_1.loadJsonConfig)(config) };
-        const secrets = yield (0, secrets_manager_core_1.getSecrets)(options, (0, exports.getRecordUids)(inputs));
+        const rxUid = new RegExp('^[A-Za-z0-9_-]{22}$');
+        const recordUids = (0, exports.getRecordUids)(inputs);
+        const hasTitles = recordUids.some(function (e) {
+            return !rxUid.test(e);
+        });
+        let uidFilter = recordUids && !hasTitles ? recordUids : undefined;
+        let secrets = yield (0, secrets_manager_core_1.getSecrets)(options, uidFilter);
+        // there's a slight chance a valid title to match a recordUID (22 url-safe base64 chars)
+        // or a missing record or record not shared to the KSM App - we need to pull all records
+        if (uidFilter && secrets.records.length < recordUids.length) {
+            uidFilter = undefined;
+            core.debug(`KSM Didn't get expected num records - requesting all (search by title or missing UID /not shared to the app/)`);
+            secrets = yield (0, secrets_manager_core_1.getSecrets)(options, uidFilter);
+        }
         core.debug(`Retrieved [${secrets.records.length}] secrets`);
         if (secrets.warnings) {
             // Print warnings if the backend find issues with the requested records

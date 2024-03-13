@@ -1,6 +1,6 @@
 import * as core from '@actions/core'
 import * as fs from 'fs'
-import {KeeperFile, downloadFile, getSecrets, getValue, loadJsonConfig} from '@keeper-security/secrets-manager-core'
+import {KeeperFile, downloadFile, getSecrets, getValue, loadJsonConfig, parseNotation} from '@keeper-security/secrets-manager-core'
 
 enum DestinationType {
     output,
@@ -9,9 +9,19 @@ enum DestinationType {
 }
 
 type SecretsInput = {
+    uid: string
+    selector: string
     notation: string
     destination: string
     destinationType: DestinationType
+}
+
+const splitInput = (text: string): string[] => {
+    const n = text.lastIndexOf('>')
+    if (n < 0) return [text, '']
+    const notation = text.substring(0, n)
+    const destination = text.substring(n + 1)
+    return [notation.trimEnd(), destination.trimStart()]
 }
 
 export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
@@ -19,7 +29,15 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
 
     for (const input of inputs) {
         core.debug(`inputParts=[${input}]`)
-        const inputParts = input.split(/\s*>\s*/)
+        const inputParts = splitInput(input)
+        let [uid, selector] = ['', '']
+        try {
+            const notation = parseNotation(inputParts[0])
+            uid = notation[1].text ? notation[1].text[0] : ''
+            selector = notation[2].text ? notation[2].text[0] : ''
+        } catch (error) {
+            core.error(`Failed to parse KSM Notation: ${error instanceof Error ? error.message : ''}`)
+        }
         let destinationType: DestinationType = DestinationType.output
         let destination = inputParts[1]
         core.debug(`destination=[${destination}]`)
@@ -30,13 +48,15 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
             destinationType = DestinationType.file
             destination = destination.slice(5)
         }
-        if (inputParts[0].split('/')[1] === 'file') {
+        if (selector === 'file') {
             destinationType = DestinationType.file
         }
 
-        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}]`)
+        core.debug(`notation=[${inputParts[0]}], destinationType=[${destinationType}], destination=[${destination}], secret=[${uid}]`)
 
         results.push({
+            uid,
+            selector,
             notation: inputParts[0],
             destination,
             destinationType
@@ -48,7 +68,7 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
 export const getRecordUids = (inputs: SecretsInput[]): string[] => {
     const set = new Set<string>()
     for (const input of inputs) {
-        set.add(input.notation.split('/')[0])
+        set.add(input.uid)
     }
     return Array.from(set)
 }
@@ -72,7 +92,22 @@ const run = async (): Promise<void> => {
 
         core.debug('Retrieving Secrets from KSM...')
         const options = {storage: loadJsonConfig(config)}
-        const secrets = await getSecrets(options, getRecordUids(inputs))
+
+        const rxUid = new RegExp('^[A-Za-z0-9_-]{22}$')
+        const recordUids = getRecordUids(inputs)
+        const hasTitles = recordUids.some(function (e) {
+            return !rxUid.test(e)
+        })
+        let uidFilter = recordUids && !hasTitles ? recordUids : undefined
+
+        let secrets = await getSecrets(options, uidFilter)
+        // there's a slight chance a valid title to match a recordUID (22 url-safe base64 chars)
+        // or a missing record or record not shared to the KSM App - we need to pull all records
+        if (uidFilter && secrets.records.length < recordUids.length) {
+            uidFilter = undefined
+            core.debug(`KSM Didn't get expected num records - requesting all (search by title or missing UID /not shared to the app/)`)
+            secrets = await getSecrets(options, uidFilter)
+        }
         core.debug(`Retrieved [${secrets.records.length}] secrets`)
 
         if (secrets.warnings) {

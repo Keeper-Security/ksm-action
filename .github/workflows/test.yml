@@ -5,23 +5,25 @@ on: # rebuild any PRs and main branch changes
   pull_request:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - run: |
           npm install
       - run: |
           npm run all
+
   test: # make sure the action works on a clean machine without building
     environment: prod
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@master
-      - uses: ./
+      - uses: actions/checkout@v4
+      - name: "Run KSM Action from source"
+        uses: ./
         id: ksm
         with:
           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
@@ -36,7 +38,8 @@ jobs:
         run: |
           echo "Username is ${{ steps.ksm.outputs.username }}"
 
-      - uses: Keeper-Security/ksm-action@master
+      - name: "Run KSM Action from GitHub Marketplace"
+        uses: Keeper-Security/ksm-action@master
         id: ksm2
         with:
           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}

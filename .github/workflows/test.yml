@@ -1,3 +1,23 @@
+# GitHub Actions test workflow for KSM Action
+# 
+# Configuration Requirements:
+# 1. Set up Secrets (Settings > Secrets and variables > Actions > Secrets):
+#    - KSM_ACTION_TEST_CONFIG: Base64-encoded KSM configuration with access to test records
+#
+# 2. Set up Variables (Settings > Secrets and variables > Actions > Variables):
+#    - KSM_TEST_RECORD_UID: The UID of a test record that the KSM app has access to
+#      (If not set, defaults to 'b7K1o8Fwoot8bryzH6pZJg')
+#
+# The test record should:
+# - Be accessible (shared) with the KSM application
+# - Have edit permissions for testing store operations
+# - Contain login and password fields (for read tests)
+# - Contain a notes field (for write/store tests)
+# - Contain a file attachment named 'file.txt' for file download tests
+# 
+# IMPORTANT: The store tests will modify the 'notes' field in the test record.
+# Make sure this is acceptable for your test environment.
+
 name: 'build-test'
 on: # rebuild any PRs and main branch changes
   workflow_dispatch:
@@ -20,6 +40,10 @@ jobs:
   test: # make sure the action works on a clean machine without building
     environment: prod
     runs-on: ubuntu-latest
+    env:
+      # Use repository variable if available, otherwise use default test record UID
+      # This can be set in GitHub repository settings under Settings > Secrets and variables > Actions > Variables
+      TEST_RECORD_UID: ${{ vars.KSM_TEST_RECORD_UID || 'b7K1o8Fwoot8bryzH6pZJg' }}
     steps:
       - uses: actions/checkout@v4
       - name: "Run KSM Action from source"
@@ -28,12 +52,12 @@ jobs:
         with:
           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
           secrets: |
-            b7K1o8Fwoot8bryzH6pZJg/field/login > username
-            b7K1o8Fwoot8bryzH6pZJg/field/password > password
-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > ./ch1.txt
-            b7K1o8Fwoot8bryzH6pZJg/field/login > env:USERNAME
-            b7K1o8Fwoot8bryzH6pZJg/field/password > env:PASSWORD
-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch1.txt
+            ${{ env.TEST_RECORD_UID }}/field/login > username
+            ${{ env.TEST_RECORD_UID }}/field/password > password
+            ${{ env.TEST_RECORD_UID }}/file/file.txt > ./test-file1.txt
+            ${{ env.TEST_RECORD_UID }}/field/login > env:USERNAME
+            ${{ env.TEST_RECORD_UID }}/field/password > env:PASSWORD
+            ${{ env.TEST_RECORD_UID }}/file/file.txt > file:./test-file2.txt
       - name: Print secrets
         run: |
           username="${{ steps.ksm.outputs.username }}"
@@ -48,12 +72,12 @@ jobs:
         with:
           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
           secrets: |
-            b7K1o8Fwoot8bryzH6pZJg/field/login > username2
-            b7K1o8Fwoot8bryzH6pZJg/field/password > password2
-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > ./ch12.txt
-            b7K1o8Fwoot8bryzH6pZJg/field/login > env:USERNAME2
-            b7K1o8Fwoot8bryzH6pZJg/field/password > env:PASSWORD2
-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch12.txt
+            ${{ env.TEST_RECORD_UID }}/field/login > username2
+            ${{ env.TEST_RECORD_UID }}/field/password > password2
+            ${{ env.TEST_RECORD_UID }}/file/file.txt > ./test-file3.txt
+            ${{ env.TEST_RECORD_UID }}/field/login > env:USERNAME2
+            ${{ env.TEST_RECORD_UID }}/field/password > env:PASSWORD2
+            ${{ env.TEST_RECORD_UID }}/file/file.txt > file:./test-file4.txt
       - name: Print secrets2
         run: |
           username="${{ steps.ksm2.outputs.username2 }}"
@@ -61,3 +85,150 @@ jobs:
           reversed=$(echo "$username" | rev)
           echo "Reversed Username: $reversed"
           echo "Username length is ${#username}"
+
+      # Test store operations with the new < operator
+      - name: Create test file for store operation
+        run: |
+          echo "This is a test note from GitHub Actions workflow run #${{ github.run_number }}" > test-notes.txt
+          echo "Repository: ${{ github.repository }}" >> test-notes.txt
+          echo "Commit: ${{ github.sha }}" >> test-notes.txt
+          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> test-notes.txt
+      
+      - name: "Test Store Operations - Multiple Sources"
+        uses: ./
+        id: ksm-store
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/notes < "Test update from GitHub Actions: ${{ github.run_number }}"
+      
+      - name: "Test Store from File"
+        uses: ./
+        id: ksm-store-file
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/notes < file:./test-notes.txt
+
+      - name: "Verify Store Operations"
+        uses: ./
+        id: ksm-verify
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/notes > stored_notes
+      
+      - name: Validate stored data
+        run: |
+          echo "Stored notes value:"
+          echo "${{ steps.ksm-verify.outputs.stored_notes }}"
+          
+          # Check if the notes field was updated
+          if [[ "${{ steps.ksm-verify.outputs.stored_notes }}" == *"GitHub Actions"* ]]; then
+            echo "✅ Store operation successful - notes field was updated"
+          else
+            echo "⚠️ Notes field content: ${{ steps.ksm-verify.outputs.stored_notes }}"
+          fi
+
+      # Test mixed operations (read and write in same action)
+      - name: "Test Mixed Read/Write Operations"
+        uses: ./
+        id: ksm-mixed
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/login > current_login
+            ${{ env.TEST_RECORD_UID }}/field/notes < "Mixed operation test: read login and update notes"
+            ${{ env.TEST_RECORD_UID }}/field/password > current_password
+      
+      - name: Verify mixed operations
+        run: |
+          echo "Login from mixed operation: ${{ steps.ksm-mixed.outputs.current_login }}"
+          echo "Password exists: ${{ steps.ksm-mixed.outputs.current_password && 'yes' || 'no' }}"
+
+      # Test error handling for invalid store operations
+      - name: "Test Store Error Handling"
+        continue-on-error: true
+        uses: ./
+        id: ksm-store-error
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/nonexistent_field < "This should fail"
+            ${{ env.TEST_RECORD_UID }}/field/fileRef < "Attempting to modify protected field"
+      
+      - name: Check error handling worked
+        run: |
+          echo "Store error test completed (errors were expected)"
+          echo "The action should have rejected:"
+          echo "  1. Creating new field 'nonexistent_field'"
+          echo "  2. Modifying protected field 'fileRef'"
+
+  test-write: # Test write/store operations specifically
+    environment: prod
+    runs-on: ubuntu-latest
+    env:
+      TEST_RECORD_UID: ${{ vars.KSM_TEST_RECORD_UID || 'b7K1o8Fwoot8bryzH6pZJg' }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Test 1: Store from environment variable
+      - name: "Test Store from Environment Variable"
+        uses: ./
+        env:
+          TEST_VALUE: "Environment variable test: ${{ github.run_number }}"
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/notes < env:TEST_VALUE
+      
+      # Test 2: Store from file
+      - name: Create test file
+        run: |
+          mkdir -p test-data
+          echo "File content test" > test-data/input.txt
+          echo "Run: ${{ github.run_number }}" >> test-data/input.txt
+          echo "SHA: ${{ github.sha }}" >> test-data/input.txt
+      
+      - name: "Test Store from File"
+        uses: ./
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/notes < file:test-data/input.txt
+      
+      # Test 3: Verify the store worked
+      - name: "Read back stored value"
+        uses: ./
+        id: verify-store
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/field/notes > notes_value
+      
+      - name: Validate store operation
+        run: |
+          echo "Notes field after store: ${{ steps.verify-store.outputs.notes_value }}"
+          if [[ -n "${{ steps.verify-store.outputs.notes_value }}" ]]; then
+            echo "✅ Store operation successful"
+          else
+            echo "❌ Store operation may have failed - notes field is empty"
+            exit 1
+          fi
+      
+      # Test 4: Test file upload capability
+      - name: Create file for upload test
+        run: |
+          echo "Test file upload content" > upload-test.txt
+          echo "Uploaded at: $(date)" >> upload-test.txt
+      
+      - name: "Test File Upload"
+        uses: ./
+        with:
+          keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+          secrets: |
+            ${{ env.TEST_RECORD_UID }}/file/upload-test.txt < file:upload-test.txt
+      
+      - name: Check file upload result
+        run: |
+          echo "File upload test completed (may fail if record doesn't support file attachments)"

@@ -1,0 +1,53 @@
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index 1234567..2345678 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -19,6 +19,10 @@ jobs:
+   test: # make sure the action works on a clean machine without building
+     environment: prod
+     runs-on: ubuntu-latest
++    env:
++      # Use repository variable if available, otherwise use default test record UID
++      # This can be set in GitHub repository settings under Settings > Secrets and variables > Actions > Variables
++      TEST_RECORD_UID: ${{ vars.KSM_TEST_RECORD_UID || 'MC5EQRXjBQMiKidoMQuoSQ' }}
+     steps:
+       - uses: actions/checkout@v4
+       - name: "Run KSM Action from source"
+@@ -27,12 +31,12 @@ jobs:
+         with:
+           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+           secrets: |
+-            b7K1o8Fwoot8bryzH6pZJg/field/login > username
+-            b7K1o8Fwoot8bryzH6pZJg/field/password > password
+-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > ./ch1.txt
+-            b7K1o8Fwoot8bryzH6pZJg/field/login > env:USERNAME
+-            b7K1o8Fwoot8bryzH6pZJg/field/password > env:PASSWORD
+-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch1.txt
++            ${{ env.TEST_RECORD_UID }}/field/login > username
++            ${{ env.TEST_RECORD_UID }}/field/password > password
++            ${{ env.TEST_RECORD_UID }}/file/file.txt > ./ch1.txt
++            ${{ env.TEST_RECORD_UID }}/field/login > env:USERNAME
++            ${{ env.TEST_RECORD_UID }}/field/password > env:PASSWORD
++            ${{ env.TEST_RECORD_UID }}/file/file.txt > file:./ch1.txt
+       - name: Print secrets
+         run: |
+           username="${{ steps.ksm.outputs.username }}"
+@@ -47,12 +51,12 @@ jobs:
+         with:
+           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
+           secrets: |
+-            b7K1o8Fwoot8bryzH6pZJg/field/login > username2
+-            b7K1o8Fwoot8bryzH6pZJg/field/password > password2
+-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > ./ch12.txt
+-            b7K1o8Fwoot8bryzH6pZJg/field/login > env:USERNAME2
+-            b7K1o8Fwoot8bryzH6pZJg/field/password > env:PASSWORD2
+-            b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch12.txt
++            ${{ env.TEST_RECORD_UID }}/field/login > username2
++            ${{ env.TEST_RECORD_UID }}/field/password > password2
++            ${{ env.TEST_RECORD_UID }}/file/file.txt > ./ch12.txt
++            ${{ env.TEST_RECORD_UID }}/field/login > env:USERNAME2
++            ${{ env.TEST_RECORD_UID }}/field/password > env:PASSWORD2
++            ${{ env.TEST_RECORD_UID }}/file/file.txt > file:./ch12.txt
+       - name: Print secrets2
+         run: |
+           username="${{ steps.ksm2.outputs.username2 }}"

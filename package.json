@@ -1,6 +1,6 @@
 {
   "name": "ksm-action",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Keeper Secrets Manager GitHub Action",
   "main": "lib/main.js",
@@ -11,6 +11,8 @@
     "lint": "eslint src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
     "test": "jest",
+    "test:integration": "npm run build && node test-integration.js",
+    "test:integration:jest": "jest integration.test.ts",
     "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
   },
   "repository": {
@@ -30,6 +32,7 @@
     "@types/node": "^20.11.26",
     "@typescript-eslint/parser": "^7.2.0",
     "@vercel/ncc": "^0.38.1",
+    "dotenv": "^17.2.1",
     "eslint": "^8.57.0",
     "eslint-plugin-github": "^4.10.2",
     "eslint-plugin-jest": "^27.9.0",

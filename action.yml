@@ -1,5 +1,5 @@
 name: 'Keeper Secrets Manager Github Action'
-description: 'A GitHub Action to consume secrets from Keeper'
+description: 'A GitHub Action to retrieve and store secrets with Keeper'
 author: 'Keeper Security Inc. <sm@keepersecurity.com>'
 inputs:
   keeper-secret-config:
@@ -7,7 +7,26 @@ inputs:
     required: true
   secrets:
     required: true
-    description: 'A list of secrets to retrieve from Keeper Vault'
+    description: 'A list of secrets to retrieve from (>) or store to (<) Keeper Vault'
+  create-if-missing:
+    description: 'Create records if they do not exist when storing values'
+    required: false
+    default: 'false'
+  folder-uid:
+    description: 'Folder UID for creating new records (required if create-if-missing is true)'
+    required: false
+  new-record-type:
+    description: 'Type for newly created records (default: login)'
+    required: false
+    default: 'login'
+  fail-on-store-error:
+    description: 'Fail the action if a store operation fails'
+    required: false
+    default: 'true'
+  allow-empty-values:
+    description: 'Allow storing empty values to fields'
+    required: false
+    default: 'false'
 runs:
   using: 'node20'
   main: 'dist/index.js'

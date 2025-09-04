@@ -208,8 +208,9 @@ jobs:
       
       - name: Validate store operation
         run: |
-          echo "Notes field after store: ${{ steps.verify-store.outputs.notes_value }}"
-          if [[ -n "${{ steps.verify-store.outputs.notes_value }}" ]]; then
+          NOTES_VALUE="${{ steps.verify-store.outputs.notes_value }}"
+          echo "Notes field after store: ${NOTES_VALUE}"
+          if [[ -n "${NOTES_VALUE}" ]]; then
             echo "✅ Store operation successful"
           else
             echo "❌ Store operation may have failed - notes field is empty"

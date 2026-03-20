@@ -7,11 +7,20 @@ on: # rebuild any PRs and main branch changes
     branches:
       - master
 
+permissions:
+  contents: read
+
 jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.node-version'
+          cache: 'npm'
       - run: |
           npm install
       - run: |
@@ -21,7 +30,9 @@ jobs:
     environment: prod
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: "Run KSM Action from source"
         uses: ./
         id: ksm
@@ -36,14 +47,13 @@ jobs:
             b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch1.txt
       - name: Print secrets
         run: |
-          username="${{ steps.ksm.outputs.username }}"
-          echo "Username is [$username]"
-          reversed=$(echo "$username" | rev)
+          echo "Username is [$USERNAME]"
+          reversed=$(echo "$USERNAME" | rev)
           echo "Reversed Username: $reversed"
-          echo "Username length is ${#username}"
+          echo "Username length is ${#USERNAME}"
 
       - name: "Run KSM Action from GitHub Marketplace"
-        uses: Keeper-Security/ksm-action@master
+        uses: Keeper-Security/ksm-action@master # zizmor: ignore[unpinned-uses] intentional: self-test against deployed master
         id: ksm2
         with:
           keeper-secret-config: ${{ secrets.KSM_ACTION_TEST_CONFIG }}
@@ -56,8 +66,7 @@ jobs:
             b7K1o8Fwoot8bryzH6pZJg/file/ch.txt > file:./ch12.txt
       - name: Print secrets2
         run: |
-          username="${{ steps.ksm2.outputs.username2 }}"
-          echo "Username is [$username]"
-          reversed=$(echo "$username" | rev)
+          echo "Username is [$USERNAME2]"
+          reversed=$(echo "$USERNAME2" | rev)
           echo "Reversed Username: $reversed"
-          echo "Username length is ${#username}"
+          echo "Username length is ${#USERNAME2}"

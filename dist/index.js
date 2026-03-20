@@ -167,7 +167,9 @@ const run = () => __awaiter(void 0, void 0, void 0, function* () {
         core.setFailed(errorMessage);
     }
 });
-run();
+if (require.main === require.cache[eval('__filename')]) {
+    run();
+}
 
 
 /***/ }),

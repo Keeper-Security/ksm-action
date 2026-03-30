@@ -25,3 +25,11 @@ jobs:
           npm install
       - run: |
           npm run all
+
+  smoke-test:
+    needs: build
+    if: github.event_name == 'pull_request'
+    uses: Keeper-Security/ksm-tester/.github/workflows/ksm-action-smoke-test.yml@master
+    with:
+      ksm_action_ref: ${{ github.head_ref }}
+    secrets: inherit

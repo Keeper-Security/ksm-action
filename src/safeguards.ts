@@ -13,7 +13,11 @@ const PROTECTED_FIELD_TYPES = new Set([
 // Field types that require special validation
 const SENSITIVE_FIELD_TYPES = new Set(['password', 'oneTimeCode', 'securityQuestion', 'pinCode', 'privateKey', 'secret'])
 
-// Standard KSM field types
+// Standard KSM field types that hold plain string values.
+// Structured types (Phone, Host, Name, Address, PaymentCard, BankAccount, KeyPair,
+// Schedule, Script, PamResource, PamHostname) are intentionally excluded: their
+// value[] arrays hold typed Objects, not strings.  Writing a plain string via
+// this action would corrupt those records.  Reserved for future JSON-input support.
 const VALID_FIELD_TYPES = new Set([
     'login',
     'password',
@@ -24,32 +28,24 @@ const VALID_FIELD_TYPES = new Set([
     'text',
     'multiline',
     'email',
-    'phone',
     'secret',
     'note',
     'securityQuestion',
     // 'passkey', // Removed - this is in PROTECTED_FIELD_TYPES
     'pinCode',
-    'address',
-    'paymentCard',
-    'bankAccount',
-    'name',
     'birthDate',
     'date',
     'expirationDate',
-    'keyPair',
-    'host',
     'licenseNumber',
-    'pamHostname',
-    'pamResource',
     'databaseType',
     'directoryType',
-    'checkbox',
-    'schedule',
-    'script'
+    'checkbox'
     // 'recordRef', // Removed - this is in PROTECTED_FIELD_TYPES
     // 'addressRef', // Removed - this is in PROTECTED_FIELD_TYPES
     // 'cardRef' // Removed - this is in PROTECTED_FIELD_TYPES
+    // Structured types (Object[] values) - not supported for plain-string writes:
+    // 'phone', 'host', 'pamHostname', 'name', 'address', 'paymentCard',
+    // 'bankAccount', 'keyPair', 'schedule', 'script', 'pamResource'
 ])
 
 export interface ValidationResult {
@@ -120,12 +116,6 @@ export function validateFieldValue(fieldType: string, value: string): Validation
         case 'url':
             if (value && !isValidUrl(value)) {
                 warnings.push(`Value stored to 'url' field is not a valid URL -- verify this is intentional.`)
-            }
-            break
-
-        case 'phone':
-            if (value && !isValidPhone(value)) {
-                warnings.push(`Value stored to 'phone' field is not a valid phone number -- verify this is intentional.`)
             }
             break
 
@@ -380,12 +370,6 @@ function isValidUrl(url: string): boolean {
         // Accept protocol-less URLs like "www.example.com" or "example.com/path"
         return /^(www\.[\w.-]+|[\w-]+\.[\w.-]+\/.*)$/.test(url)
     }
-}
-
-function isValidPhone(phone: string): boolean {
-    // Very basic phone validation - just check for digits and common separators
-    const phoneRegex = /^[\d\s\-+().]+$/
-    return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 7
 }
 
 function isValidDate(date: string): boolean {

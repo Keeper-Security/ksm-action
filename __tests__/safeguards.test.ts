@@ -31,7 +31,6 @@ describe('Safeguards', () => {
             expect(isValidFieldType('password')).toBe(true)
             expect(isValidFieldType('login')).toBe(true)
             expect(isValidFieldType('email')).toBe(true)
-            expect(isValidFieldType('phone')).toBe(true)
             expect(isValidFieldType('url')).toBe(true)
             expect(isValidFieldType('notes')).toBe(true)
         })
@@ -39,6 +38,13 @@ describe('Safeguards', () => {
         it('should reject unknown field types', () => {
             expect(isValidFieldType('customField123')).toBe(false)
             expect(isValidFieldType('unknown')).toBe(false)
+        })
+
+        it('should reject structured field types (Object[] values, not string[])', () => {
+            expect(isValidFieldType('phone')).toBe(false)
+            expect(isValidFieldType('host')).toBe(false)
+            expect(isValidFieldType('name')).toBe(false)
+            expect(isValidFieldType('address')).toBe(false)
         })
     })
 
@@ -71,13 +77,10 @@ describe('Safeguards', () => {
             expect(invalid.warnings.length).toBeGreaterThan(0)
         })
 
-        it('should validate phone fields', () => {
-            const valid = validateFieldValue('phone', '+1-555-123-4567')
-            expect(valid.valid).toBe(true)
-
-            const invalid = validateFieldValue('phone', 'abc123')
-            expect(invalid.valid).toBe(true) // Phone only generates warnings
-            expect(invalid.warnings.length).toBeGreaterThan(0)
+        it('should reject phone fields (structured Object[] type, not a plain string)', () => {
+            const result = validateFieldValue('phone', '+1-555-123-4567')
+            expect(result.valid).toBe(false)
+            expect(result.errors.some(e => e.includes('structured') || e.includes('not a recognized'))).toBe(true)
         })
 
         it('should validate checkbox fields', () => {
@@ -340,6 +343,35 @@ describe('Safeguards', () => {
             expect(sanitizeFieldValue('string')).toBe('string')
             expect(sanitizeFieldValue(123)).toBe('123')
             expect(sanitizeFieldValue(true)).toBe('true')
+        })
+    })
+
+    describe('Structured field type protection [bug proof]', () => {
+        // Proof: VALID_FIELD_TYPES includes complex types whose value[] arrays hold Objects,
+        // not strings. Writing a plain string via safeUpdateField corrupts those records.
+        // keeper.d.ts confirms: Phone{region,number,ext,type}, Host{hostName,port},
+        // Name{first,middle,last}, Address{...}, PaymentCard{...}, etc.
+        // Fix: remove these from VALID_FIELD_TYPES so validateFieldValue rejects them.
+        const structuredTypes = [
+            'phone', // Phone{region,number,ext,type}
+            'host', // Host{hostName,port}
+            'pamHostname', // Host{hostName,port}
+            'name', // Name{first,middle,last}
+            'address', // Address{street1,...,zip}
+            'paymentCard', // PaymentCard{cardNumber,...}
+            'bankAccount', // BankAccount{accountType,routingNumber,...}
+            'keyPair', // KeyPair{publicKey,privateKey}
+            'schedule', // Schedule{type,cron,time,tz,...}
+            'script', // Script{fileRef,command,recordRef[]}
+            'pamResource' // PamResource{controllerUid,folderUid,...}
+        ]
+
+        structuredTypes.forEach(fieldType => {
+            it(`should reject plain-string write to structured field '${fieldType}'`, () => {
+                const result = validateFieldValue(fieldType, 'plain string value')
+                expect(result.valid).toBe(false)
+                expect(result.errors.some(e => e.includes('structured') || e.includes('not a recognized'))).toBe(true)
+            })
         })
     })
 

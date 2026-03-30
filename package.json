@@ -11,7 +11,7 @@
     "lint": "eslint src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
     "test": "jest",
-    "test:integration": "npm run build && node test-integration.js",
+    "test:integration": "npm run build && node scripts/test-integration.js",
     "test:integration:jest": "jest integration.test.ts",
     "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
   },

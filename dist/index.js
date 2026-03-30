@@ -126,10 +126,13 @@ const stripQuotes = (value) => {
 };
 const parseInput = (text) => {
     // Check for store operation (<)
-    const storeIndex = text.indexOf('<');
-    if (storeIndex > 0) {
-        const notation = text.substring(0, storeIndex).trim();
-        let source = text.substring(storeIndex + 1).trim();
+    // Use a regex anchored to the notation's selector (field/file/custom_field)
+    // so that '<' inside record titles or password values is not mistaken
+    // for the operator.
+    const storeMatch = text.match(/^(.+\/(?:field|file|custom_field)\/[^<>]+?)\s*<\s*(.+)$/i);
+    if (storeMatch) {
+        const notation = storeMatch[1].trim();
+        let source = storeMatch[2].trim();
         // Strip matching quotes to preserve intentional whitespace in values
         // e.g. record/field/password < "value with spaces  "
         source = stripQuotes(source);
@@ -233,10 +236,7 @@ const handleKsmError = (error, operation, notation, logger = core) => {
         throw new KsmActionError(KsmErrorType.PERMISSION_DENIED, `Permission denied when trying to ${operation} ${notation}. ${friendlyMessage}`, { originalError: errorMessage });
     }
     // Check for sync errors
-    const isSyncError = errorMessage.toLowerCase().includes('out of sync') ||
-        errorMessage.toLowerCase().includes('sync') ||
-        (errorObj === null || errorObj === void 0 ? void 0 : errorObj.error) === 'sync_required' ||
-        ((_b = errorObj === null || errorObj === void 0 ? void 0 : errorObj.message) === null || _b === void 0 ? void 0 : _b.includes('out of sync'));
+    const isSyncError = errorMessage.toLowerCase().includes('out of sync') || (errorObj === null || errorObj === void 0 ? void 0 : errorObj.error) === 'sync_required' || ((_b = errorObj === null || errorObj === void 0 ? void 0 : errorObj.message) === null || _b === void 0 ? void 0 : _b.includes('out of sync'));
     if (isSyncError) {
         logger.warning(`⚠️ Record out of sync: ${notation}`);
         logger.warning(`   Attempting to refresh and retry...`);
@@ -272,6 +272,9 @@ class KsmAction {
         if (source.startsWith('env:')) {
             // Get from environment variable
             const envVar = source.slice(4);
+            if (process.env[envVar] === undefined) {
+                this.logger.warning(`Environment variable '${envVar}' is not set — value will be empty`);
+            }
             return process.env[envVar] || '';
         }
         else if (source.startsWith('file:')) {
@@ -280,9 +283,7 @@ class KsmAction {
             return fs.readFileSync(filePath, 'utf8');
         }
         else if (source.startsWith('out:')) {
-            // Get from GitHub Actions output
-            const outputVar = source.slice(4);
-            return this.logger.getInput(outputVar) || '';
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `'out:' source prefix is not supported. Use GitHub Actions expressions (\${{ steps.id.outputs.name }}) in your workflow YAML instead.`);
         }
         else {
             // Direct value or GitHub Actions expression (already resolved)
@@ -445,33 +446,40 @@ class KsmAction {
             }
         });
     }
-    storeFieldValue(options_1, input_1) {
-        return __awaiter(this, arguments, void 0, function* (options, input, retryCount = 0) {
+    storeFieldsForRecord(options_1, ops_1) {
+        return __awaiter(this, arguments, void 0, function* (options, ops, retryCount = 0) {
             try {
-                const valueToStore = this.resolveSourceValue(input.destination);
-                // Mask the resolved value so it never appears in logs
-                if (valueToStore) {
-                    this.logger.setSecret(valueToStore);
+                // Resolve all source values upfront so masking and empty-value checks happen before any API calls
+                const resolvedOps = [];
+                for (const input of ops) {
+                    const valueToStore = this.resolveSourceValue(input.destination);
+                    if (valueToStore) {
+                        this.logger.setSecret(valueToStore);
+                    }
+                    if (!valueToStore && !this.logger.getBooleanInput('allow-empty-values')) {
+                        this.logger.warning(`Skipping empty value for ${input.notation}`);
+                        continue;
+                    }
+                    resolvedOps.push({ input, value: valueToStore });
                 }
-                if (!valueToStore && !this.logger.getBooleanInput('allow-empty-values')) {
-                    this.logger.warning(`Skipping empty value for ${input.notation}`);
+                if (resolvedOps.length === 0)
                     return;
-                }
-                // Retrieve the record with error handling
+                const uid = ops[0].uid;
+                // Fetch record once for all ops in this group
                 let secrets;
                 try {
-                    secrets = yield this.ksmOps.getSecrets(options, [input.uid]);
+                    secrets = yield this.ksmOps.getSecrets(options, [uid]);
                 }
                 catch (error) {
-                    handleKsmError(error, 'retrieve', input.notation, this.logger);
+                    handleKsmError(error, 'retrieve', ops[0].notation, this.logger);
                     throw error;
                 }
                 if (secrets.records.length === 0) {
                     if (this.logger.getBooleanInput('create-if-missing')) {
-                        yield this.createNewRecord(options, input, valueToStore);
+                        yield this.createNewRecord(options, resolvedOps[0].input, resolvedOps[0].value);
                         return;
                     }
-                    throw new KsmActionError(KsmErrorType.RECORD_NOT_FOUND, `Record ${input.uid} not found and create-if-missing is false`);
+                    throw new KsmActionError(KsmErrorType.RECORD_NOT_FOUND, `Record ${uid} not found and create-if-missing is false`);
                 }
                 const record = secrets.records[0];
                 // Check record integrity before modification
@@ -479,62 +487,82 @@ class KsmAction {
                 if (!integrityCheck.hasValidStructure) {
                     this.logger.warning(`⚠️ Record structure issues detected: ${integrityCheck.invalidFields.join(', ')}`);
                 }
-                // Create backup before modifications
+                // Handle file uploads (independent per-file API calls, no updateSecret needed)
+                for (const { input } of resolvedOps.filter(op => op.input.selector === 'file')) {
+                    yield this.storeFileToRecord(options, record, input.destination);
+                }
+                // Apply all field updates together, then persist with a single updateSecret call
+                const fieldOps = resolvedOps.filter(op => op.input.selector !== 'file');
+                if (fieldOps.length === 0)
+                    return;
                 const backup = (0, safeguards_1.createRecordBackup)(record);
-                try {
-                    // Handle file upload
-                    if (input.selector === 'file') {
-                        yield this.storeFileToRecord(options, record, input.destination);
-                        return;
-                    }
-                    // Update field with safeguards
-                    this.updateRecordField(record, input, valueToStore);
-                    // Verify record integrity after modification
-                    const postUpdateCheck = (0, safeguards_1.checkRecordIntegrity)(record);
-                    if (!postUpdateCheck.hasValidStructure) {
-                        // Restore from backup if integrity check fails
-                        (0, safeguards_1.restoreRecordFromBackup)(record, backup);
-                        throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Record integrity check failed after modification. Changes reverted.`);
-                    }
-                    // Persist changes with error handling
+                // Apply each field update, isolating per-op validation errors
+                const appliedOps = [];
+                for (const op of fieldOps) {
                     try {
-                        yield this.ksmOps.updateSecret(options, record);
-                        this.logger.info(`✅ Successfully stored value to ${input.notation}`);
+                        this.updateRecordField(record, op.input, op.value);
+                        appliedOps.push(op);
                     }
                     catch (error) {
-                        // Check if it's a sync error and we can retry
-                        const errorMessage = (error === null || error === void 0 ? void 0 : error.message) || String(error);
-                        const isSyncError = errorMessage.toLowerCase().includes('out of sync');
-                        const MAX_RETRIES = 2;
-                        if (isSyncError && retryCount < MAX_RETRIES) {
-                            this.logger.warning(`⚠️ Record out of sync, retrying (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`);
-                            // Add exponential backoff
-                            yield new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
-                            // Retry the entire operation with fresh data
-                            return this.storeFieldValue(options, input, retryCount + 1);
+                        if (fieldOps.length === 1) {
+                            // Single-op: propagate error directly for backward compatibility
+                            (0, safeguards_1.restoreRecordFromBackup)(record, backup);
+                            throw error;
                         }
-                        // Restore backup on update failure
-                        (0, safeguards_1.restoreRecordFromBackup)(record, backup);
-                        this.logger.error(`Failed to update record, changes reverted`);
-                        handleKsmError(error, 'update', input.notation, this.logger);
-                        throw error;
+                        // Multi-op: log per-op error but continue processing remaining ops
+                        if (error instanceof KsmActionError) {
+                            this.logger.error(`❌ ${error.message}`);
+                        }
+                        else {
+                            this.logger.error(`❌ Failed to update ${op.input.notation}: ${error}`);
+                        }
+                    }
+                }
+                if (appliedOps.length === 0) {
+                    (0, safeguards_1.restoreRecordFromBackup)(record, backup);
+                    throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `All field updates failed for record ${uid}`);
+                }
+                // Verify record integrity after all modifications
+                const postUpdateCheck = (0, safeguards_1.checkRecordIntegrity)(record);
+                if (!postUpdateCheck.hasValidStructure) {
+                    (0, safeguards_1.restoreRecordFromBackup)(record, backup);
+                    throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Record integrity check failed after modification. Changes reverted.`);
+                }
+                // Persist all successful field changes in a single update call
+                try {
+                    yield this.ksmOps.updateSecret(options, record);
+                    for (const { input } of appliedOps) {
+                        this.logger.info(`✅ Successfully stored value to ${input.notation}`);
                     }
                 }
                 catch (error) {
-                    // Ensure backup is restored on any error
-                    if (backup && error instanceof KsmActionError) {
-                        (0, safeguards_1.restoreRecordFromBackup)(record, backup);
+                    const errorMessage = (error === null || error === void 0 ? void 0 : error.message) || String(error);
+                    const isSyncError = errorMessage.toLowerCase().includes('out of sync');
+                    const MAX_RETRIES = 2;
+                    if (isSyncError && retryCount < MAX_RETRIES) {
+                        this.logger.warning(`⚠️ Record out of sync, retrying (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`);
+                        yield new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+                        return this.storeFieldsForRecord(options, ops, retryCount + 1);
                     }
+                    (0, safeguards_1.restoreRecordFromBackup)(record, backup);
+                    this.logger.error(`Failed to update record, changes reverted`);
+                    handleKsmError(error, 'update', ops[0].notation, this.logger);
                     throw error;
                 }
             }
             catch (error) {
-                // Re-throw KsmActionError, wrap others
                 if (error instanceof KsmActionError) {
                     throw error;
                 }
-                throw new KsmActionError(KsmErrorType.NETWORK_ERROR, `Unexpected error storing ${input.notation}`, { originalError: error });
+                throw new KsmActionError(KsmErrorType.NETWORK_ERROR, `Unexpected error storing ${ops.map(o => o.notation).join(', ')}`, { originalError: error });
             }
+        });
+    }
+    storeFieldValue(options_1, input_1) {
+        return __awaiter(this, arguments, void 0, function* (options, input, retryCount = 0) {
+            // retryCount kept for API compatibility; retry is handled internally by storeFieldsForRecord
+            void retryCount;
+            return this.storeFieldsForRecord(options, [input]);
         });
     }
     createNewRecord(options, input, value) {
@@ -649,11 +677,10 @@ class KsmAction {
                         group.push(op);
                         groupedByUid.set(op.uid, group);
                     }
-                    // Process different records in parallel, but operations on the same record sequentially
+                    // Process different records in parallel; all ops for the same record are batched
+                    // into a single fetch + single update via storeFieldsForRecord
                     const results = yield Promise.allSettled(Array.from(groupedByUid.values()).map((ops) => __awaiter(this, void 0, void 0, function* () {
-                        for (const op of ops) {
-                            yield this.storeFieldValue(options, op);
-                        }
+                        yield this.storeFieldsForRecord(options, ops);
                     })));
                     // Report results
                     const failures = results.filter(r => r.status === 'rejected');
@@ -743,7 +770,11 @@ const PROTECTED_FIELD_TYPES = new Set([
 ]);
 // Field types that require special validation
 const SENSITIVE_FIELD_TYPES = new Set(['password', 'oneTimeCode', 'securityQuestion', 'pinCode', 'privateKey', 'secret']);
-// Standard KSM field types
+// Standard KSM field types that hold plain string values.
+// Structured types (Phone, Host, Name, Address, PaymentCard, BankAccount, KeyPair,
+// Schedule, Script, PamResource, PamHostname) are intentionally excluded: their
+// value[] arrays hold typed Objects, not strings.  Writing a plain string via
+// this action would corrupt those records.  Reserved for future JSON-input support.
 const VALID_FIELD_TYPES = new Set([
     'login',
     'password',
@@ -754,32 +785,24 @@ const VALID_FIELD_TYPES = new Set([
     'text',
     'multiline',
     'email',
-    'phone',
     'secret',
     'note',
     'securityQuestion',
     // 'passkey', // Removed - this is in PROTECTED_FIELD_TYPES
     'pinCode',
-    'address',
-    'paymentCard',
-    'bankAccount',
-    'name',
     'birthDate',
     'date',
     'expirationDate',
-    'keyPair',
-    'host',
     'licenseNumber',
-    'pamHostname',
-    'pamResource',
     'databaseType',
     'directoryType',
-    'checkbox',
-    'schedule',
-    'script'
+    'checkbox'
     // 'recordRef', // Removed - this is in PROTECTED_FIELD_TYPES
     // 'addressRef', // Removed - this is in PROTECTED_FIELD_TYPES
     // 'cardRef' // Removed - this is in PROTECTED_FIELD_TYPES
+    // Structured types (Object[] values) - not supported for plain-string writes:
+    // 'phone', 'host', 'pamHostname', 'name', 'address', 'paymentCard',
+    // 'bankAccount', 'keyPair', 'schedule', 'script', 'pamResource'
 ]);
 /**
  * Validates if a field type can be modified
@@ -829,11 +852,6 @@ function validateFieldValue(fieldType, value) {
         case 'url':
             if (value && !isValidUrl(value)) {
                 warnings.push(`Value stored to 'url' field is not a valid URL -- verify this is intentional.`);
-            }
-            break;
-        case 'phone':
-            if (value && !isValidPhone(value)) {
-                warnings.push(`Value stored to 'phone' field is not a valid phone number -- verify this is intentional.`);
             }
             break;
         case 'checkbox':
@@ -1056,11 +1074,6 @@ function isValidUrl(url) {
         // Accept protocol-less URLs like "www.example.com" or "example.com/path"
         return /^(www\.[\w.-]+|[\w-]+\.[\w.-]+\/.*)$/.test(url);
     }
-}
-function isValidPhone(phone) {
-    // Very basic phone validation - just check for digits and common separators
-    const phoneRegex = /^[\d\s\-+().]+$/;
-    return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 7;
 }
 function isValidDate(date) {
     // Check ISO 8601 format

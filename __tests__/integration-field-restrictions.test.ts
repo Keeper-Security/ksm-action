@@ -24,7 +24,7 @@ describe('Field Restrictions Integration Tests', () => {
 
     describe('Protected Field Restrictions', () => {
         it('should reject modification of fileRef field', async () => {
-            const mockLogger = createMockLogger(['A7Pu-DNINF8d14VD5NGETA/field/fileRef < test-value'])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/fileRef < test-value`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -35,7 +35,7 @@ describe('Field Restrictions Integration Tests', () => {
         })
 
         it('should reject modification of passkey field', async () => {
-            const mockLogger = createMockLogger(['A7Pu-DNINF8d14VD5NGETA/field/passkey < test-value'])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/passkey < test-value`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -48,7 +48,7 @@ describe('Field Restrictions Integration Tests', () => {
 
     describe('New Field Addition Restrictions', () => {
         it('should reject adding a new field that does not exist', async () => {
-            const mockLogger = createMockLogger(['A7Pu-DNINF8d14VD5NGETA/field/newCustomField < test-value'])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/newCustomField < test-value`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -60,7 +60,7 @@ describe('Field Restrictions Integration Tests', () => {
         })
 
         it('should reject adding custom fields', async () => {
-            const mockLogger = createMockLogger(['A7Pu-DNINF8d14VD5NGETA/field/customFieldThatDoesNotExist < test-value'])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/customFieldThatDoesNotExist < test-value`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -73,7 +73,7 @@ describe('Field Restrictions Integration Tests', () => {
     describe('Invalid Value Format Handling', () => {
         it('should reject invalid email format', async () => {
             // Try to set an invalid email to a field
-            const mockLogger = createMockLogger(['A7Pu-DNINF8d14VD5NGETA/field/email < not-an-email'])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/email < not-an-email`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -84,7 +84,7 @@ describe('Field Restrictions Integration Tests', () => {
         })
 
         it('should reject invalid checkbox value', async () => {
-            const mockLogger = createMockLogger(['A7Pu-DNINF8d14VD5NGETA/field/checkbox < maybe'])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/checkbox < maybe`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -96,7 +96,7 @@ describe('Field Restrictions Integration Tests', () => {
 
         it('should reject values exceeding maximum length', async () => {
             const longValue = 'a'.repeat(10001)
-            const mockLogger = createMockLogger([`A7Pu-DNINF8d14VD5NGETA/field/notes < ${longValue}`])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/notes < ${longValue}`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -109,7 +109,7 @@ describe('Field Restrictions Integration Tests', () => {
     describe('Valid Field Updates', () => {
         it('should allow updating existing password field', async () => {
             const testPassword = `test-pwd-${Date.now()}`
-            const mockLogger = createMockLogger([`A7Pu-DNINF8d14VD5NGETA/field/password < ${testPassword}`])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/password < ${testPassword}`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -120,7 +120,7 @@ describe('Field Restrictions Integration Tests', () => {
 
         it('should allow updating existing login field', async () => {
             const testLogin = `test-user-${Date.now()}`
-            const mockLogger = createMockLogger([`A7Pu-DNINF8d14VD5NGETA/field/login < ${testLogin}`])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/login < ${testLogin}`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -131,7 +131,7 @@ describe('Field Restrictions Integration Tests', () => {
 
         it('should warn about weak passwords but still allow update', async () => {
             const weakPassword = '123'
-            const mockLogger = createMockLogger([`A7Pu-DNINF8d14VD5NGETA/field/password < ${weakPassword}`])
+            const mockLogger = createMockLogger([`${testRecordUid}/field/password < ${weakPassword}`])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 
             await action.run()
@@ -145,9 +145,9 @@ describe('Field Restrictions Integration Tests', () => {
     describe('Multiple Operations', () => {
         it('should handle mix of valid and invalid operations', async () => {
             const mockLogger = createMockLogger([
-                'A7Pu-DNINF8d14VD5NGETA/field/password < validpass123', // Should succeed
-                'A7Pu-DNINF8d14VD5NGETA/field/fileRef < invalid', // Should fail (protected)
-                'A7Pu-DNINF8d14VD5NGETA/field/newField < value' // Should fail (doesn't exist)
+                `${testRecordUid}/field/password < validpass123`, // Should succeed
+                `${testRecordUid}/field/fileRef < invalid`, // Should fail (protected)
+                `${testRecordUid}/field/newField < value` // Should fail (doesn't exist)
             ])
             const action = new KsmAction(new KsmOperations(), mockLogger)
 

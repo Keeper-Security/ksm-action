@@ -9,11 +9,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { KsmAction, KsmOperations } = require('./lib/main');
+const { KsmAction, KsmOperations } = require('../lib/main');
 const { loadJsonConfig, getSecrets, updateSecret } = require('@keeper-security/secrets-manager-core');
 
 // Load .env.local if it exists
-const envPath = path.join(__dirname, '.env.local');
+const envPath = path.join(__dirname, '..', '.env.local');
 if (fs.existsSync(envPath)) {
     require('dotenv').config({ path: envPath });
     console.log('✅ Loaded configuration from .env.local\n');
@@ -134,7 +134,7 @@ async function runTests() {
             console.log('📁 Test 4: Testing file upload...');
             
             // Create a test file
-            const testFilePath = path.join(__dirname, 'test-file.txt');
+            const testFilePath = path.join(__dirname, '..', 'test-file.txt');
             const testContent = `Test file created at ${new Date().toISOString()}`;
             fs.writeFileSync(testFilePath, testContent);
             

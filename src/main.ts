@@ -109,10 +109,13 @@ const stripQuotes = (value: string): string => {
 
 const parseInput = (text: string): [string, string, OperationType] => {
     // Check for store operation (<)
-    const storeIndex = text.indexOf('<')
-    if (storeIndex > 0) {
-        const notation = text.substring(0, storeIndex).trim()
-        let source = text.substring(storeIndex + 1).trim()
+    // Use a regex anchored to the notation's selector (field/file/custom_field)
+    // so that '<' inside record titles or password values is not mistaken
+    // for the operator.
+    const storeMatch = text.match(/^(.+\/(?:field|file|custom_field)\/[^<>]+?)\s*<\s*(.+)$/i)
+    if (storeMatch) {
+        const notation = storeMatch[1].trim()
+        let source = storeMatch[2].trim()
         // Strip matching quotes to preserve intentional whitespace in values
         // e.g. record/field/password < "value with spaces  "
         source = stripQuotes(source)
@@ -173,7 +176,9 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
             destinationType = DestinationType.value
         }
 
-        core.debug(`notation=[${notation}], operationType=[${operationType}], destinationType=[${destinationType}], destination=[${operationType === OperationType.store ? '***' : destination}], uid=[${uid}]`)
+        core.debug(
+            `notation=[${notation}], operationType=[${operationType}], destinationType=[${destinationType}], destination=[${operationType === OperationType.store ? '***' : destination}], uid=[${uid}]`
+        )
 
         results.push({
             uid,
@@ -227,11 +232,7 @@ const handleKsmError = (error: unknown, operation: string, notation: string, log
     }
 
     // Check for sync errors
-    const isSyncError =
-        errorMessage.toLowerCase().includes('out of sync') ||
-        errorMessage.toLowerCase().includes('sync') ||
-        errorObj?.error === 'sync_required' ||
-        errorObj?.message?.includes('out of sync')
+    const isSyncError = errorMessage.toLowerCase().includes('out of sync') || errorObj?.error === 'sync_required' || errorObj?.message?.includes('out of sync')
 
     if (isSyncError) {
         logger.warning(`⚠️ Record out of sync: ${notation}`)
@@ -265,10 +266,7 @@ export class KsmAction {
         const resolvedPath = path.resolve(filePath)
         const workspaceDir = process.env.GITHUB_WORKSPACE || process.cwd()
         if (!resolvedPath.startsWith(path.resolve(workspaceDir))) {
-            throw new KsmActionError(
-                KsmErrorType.INVALID_CONFIG,
-                `File path must be within the workspace directory: ${filePath}`
-            )
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File path must be within the workspace directory: ${filePath}`)
         }
         return resolvedPath
     }
@@ -278,15 +276,19 @@ export class KsmAction {
         if (source.startsWith('env:')) {
             // Get from environment variable
             const envVar = source.slice(4)
+            if (process.env[envVar] === undefined) {
+                this.logger.warning(`Environment variable '${envVar}' is not set — value will be empty`)
+            }
             return process.env[envVar] || ''
         } else if (source.startsWith('file:')) {
             // Read from file
             const filePath = this.validateFilePath(source.slice(5))
             return fs.readFileSync(filePath, 'utf8')
         } else if (source.startsWith('out:')) {
-            // Get from GitHub Actions output
-            const outputVar = source.slice(4)
-            return this.logger.getInput(outputVar) || ''
+            throw new KsmActionError(
+                KsmErrorType.INVALID_CONFIG,
+                `'out:' source prefix is not supported. Use GitHub Actions expressions (\${{ steps.id.outputs.name }}) in your workflow YAML instead.`
+            )
         } else {
             // Direct value or GitHub Actions expression (already resolved)
             return source
@@ -478,35 +480,41 @@ export class KsmAction {
         }
     }
 
-    async storeFieldValue(options: SecretManagerOptions, input: SecretsInput, retryCount = 0): Promise<void> {
+    async storeFieldsForRecord(options: SecretManagerOptions, ops: SecretsInput[], retryCount = 0): Promise<void> {
         try {
-            const valueToStore = this.resolveSourceValue(input.destination)
-
-            // Mask the resolved value so it never appears in logs
-            if (valueToStore) {
-                this.logger.setSecret(valueToStore)
+            // Resolve all source values upfront so masking and empty-value checks happen before any API calls
+            const resolvedOps: {input: SecretsInput; value: string}[] = []
+            for (const input of ops) {
+                const valueToStore = this.resolveSourceValue(input.destination)
+                if (valueToStore) {
+                    this.logger.setSecret(valueToStore)
+                }
+                if (!valueToStore && !this.logger.getBooleanInput('allow-empty-values')) {
+                    this.logger.warning(`Skipping empty value for ${input.notation}`)
+                    continue
+                }
+                resolvedOps.push({input, value: valueToStore})
             }
 
-            if (!valueToStore && !this.logger.getBooleanInput('allow-empty-values')) {
-                this.logger.warning(`Skipping empty value for ${input.notation}`)
-                return
-            }
+            if (resolvedOps.length === 0) return
 
-            // Retrieve the record with error handling
+            const uid = ops[0].uid
+
+            // Fetch record once for all ops in this group
             let secrets: KeeperSecrets
             try {
-                secrets = await this.ksmOps.getSecrets(options, [input.uid])
+                secrets = await this.ksmOps.getSecrets(options, [uid])
             } catch (error) {
-                handleKsmError(error, 'retrieve', input.notation, this.logger)
+                handleKsmError(error, 'retrieve', ops[0].notation, this.logger)
                 throw error
             }
 
             if (secrets.records.length === 0) {
                 if (this.logger.getBooleanInput('create-if-missing')) {
-                    await this.createNewRecord(options, input, valueToStore)
+                    await this.createNewRecord(options, resolvedOps[0].input, resolvedOps[0].value)
                     return
                 }
-                throw new KsmActionError(KsmErrorType.RECORD_NOT_FOUND, `Record ${input.uid} not found and create-if-missing is false`)
+                throw new KsmActionError(KsmErrorType.RECORD_NOT_FOUND, `Record ${uid} not found and create-if-missing is false`)
             }
 
             const record = secrets.records[0]
@@ -517,65 +525,84 @@ export class KsmAction {
                 this.logger.warning(`⚠️ Record structure issues detected: ${integrityCheck.invalidFields.join(', ')}`)
             }
 
-            // Create backup before modifications
+            // Handle file uploads (independent per-file API calls, no updateSecret needed)
+            for (const {input} of resolvedOps.filter(op => op.input.selector === 'file')) {
+                await this.storeFileToRecord(options, record, input.destination)
+            }
+
+            // Apply all field updates together, then persist with a single updateSecret call
+            const fieldOps = resolvedOps.filter(op => op.input.selector !== 'file')
+            if (fieldOps.length === 0) return
+
             const backup = createRecordBackup(record)
 
-            try {
-                // Handle file upload
-                if (input.selector === 'file') {
-                    await this.storeFileToRecord(options, record, input.destination)
-                    return
-                }
-
-                // Update field with safeguards
-                this.updateRecordField(record, input, valueToStore)
-
-                // Verify record integrity after modification
-                const postUpdateCheck = checkRecordIntegrity(record)
-                if (!postUpdateCheck.hasValidStructure) {
-                    // Restore from backup if integrity check fails
-                    restoreRecordFromBackup(record, backup)
-                    throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Record integrity check failed after modification. Changes reverted.`)
-                }
-
-                // Persist changes with error handling
+            // Apply each field update, isolating per-op validation errors
+            const appliedOps: typeof fieldOps = []
+            for (const op of fieldOps) {
                 try {
-                    await this.ksmOps.updateSecret(options, record)
-                    this.logger.info(`✅ Successfully stored value to ${input.notation}`)
+                    this.updateRecordField(record, op.input, op.value)
+                    appliedOps.push(op)
                 } catch (error) {
-                    // Check if it's a sync error and we can retry
-                    const errorMessage = (error as Error)?.message || String(error)
-                    const isSyncError = errorMessage.toLowerCase().includes('out of sync')
-                    const MAX_RETRIES = 2
-
-                    if (isSyncError && retryCount < MAX_RETRIES) {
-                        this.logger.warning(`⚠️ Record out of sync, retrying (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`)
-                        // Add exponential backoff
-                        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)))
-                        // Retry the entire operation with fresh data
-                        return this.storeFieldValue(options, input, retryCount + 1)
+                    if (fieldOps.length === 1) {
+                        // Single-op: propagate error directly for backward compatibility
+                        restoreRecordFromBackup(record, backup)
+                        throw error
                     }
+                    // Multi-op: log per-op error but continue processing remaining ops
+                    if (error instanceof KsmActionError) {
+                        this.logger.error(`❌ ${error.message}`)
+                    } else {
+                        this.logger.error(`❌ Failed to update ${op.input.notation}: ${error}`)
+                    }
+                }
+            }
 
-                    // Restore backup on update failure
-                    restoreRecordFromBackup(record, backup)
-                    this.logger.error(`Failed to update record, changes reverted`)
-                    handleKsmError(error, 'update', input.notation, this.logger)
-                    throw error
+            if (appliedOps.length === 0) {
+                restoreRecordFromBackup(record, backup)
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `All field updates failed for record ${uid}`)
+            }
+
+            // Verify record integrity after all modifications
+            const postUpdateCheck = checkRecordIntegrity(record)
+            if (!postUpdateCheck.hasValidStructure) {
+                restoreRecordFromBackup(record, backup)
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Record integrity check failed after modification. Changes reverted.`)
+            }
+
+            // Persist all successful field changes in a single update call
+            try {
+                await this.ksmOps.updateSecret(options, record)
+                for (const {input} of appliedOps) {
+                    this.logger.info(`✅ Successfully stored value to ${input.notation}`)
                 }
             } catch (error) {
-                // Ensure backup is restored on any error
-                if (backup && error instanceof KsmActionError) {
-                    restoreRecordFromBackup(record, backup)
+                const errorMessage = (error as Error)?.message || String(error)
+                const isSyncError = errorMessage.toLowerCase().includes('out of sync')
+                const MAX_RETRIES = 2
+
+                if (isSyncError && retryCount < MAX_RETRIES) {
+                    this.logger.warning(`⚠️ Record out of sync, retrying (attempt ${retryCount + 2}/${MAX_RETRIES + 1})...`)
+                    await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)))
+                    return this.storeFieldsForRecord(options, ops, retryCount + 1)
                 }
+
+                restoreRecordFromBackup(record, backup)
+                this.logger.error(`Failed to update record, changes reverted`)
+                handleKsmError(error, 'update', ops[0].notation, this.logger)
                 throw error
             }
         } catch (error) {
-            // Re-throw KsmActionError, wrap others
             if (error instanceof KsmActionError) {
                 throw error
             }
-            throw new KsmActionError(KsmErrorType.NETWORK_ERROR, `Unexpected error storing ${input.notation}`, {originalError: error})
+            throw new KsmActionError(KsmErrorType.NETWORK_ERROR, `Unexpected error storing ${ops.map(o => o.notation).join(', ')}`, {originalError: error})
         }
+    }
+
+    async storeFieldValue(options: SecretManagerOptions, input: SecretsInput, retryCount = 0): Promise<void> {
+        // retryCount kept for API compatibility; retry is handled internally by storeFieldsForRecord
+        void retryCount
+        return this.storeFieldsForRecord(options, [input])
     }
 
     async createNewRecord(options: SecretManagerOptions, input: SecretsInput, value: string): Promise<void> {
@@ -700,12 +727,11 @@ export class KsmAction {
                     groupedByUid.set(op.uid, group)
                 }
 
-                // Process different records in parallel, but operations on the same record sequentially
+                // Process different records in parallel; all ops for the same record are batched
+                // into a single fetch + single update via storeFieldsForRecord
                 const results = await Promise.allSettled(
-                    Array.from(groupedByUid.values()).map(async (ops) => {
-                        for (const op of ops) {
-                            await this.storeFieldValue(options, op)
-                        }
+                    Array.from(groupedByUid.values()).map(async ops => {
+                        await this.storeFieldsForRecord(options, ops)
                     })
                 )
 

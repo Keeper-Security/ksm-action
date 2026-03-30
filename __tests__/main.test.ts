@@ -15,9 +15,7 @@ class MockKsmOperations implements IKsmOperations {
         if (this.shouldFailWith) throw this.shouldFailWith
 
         // If no filter, return all records
-        const records = filter
-            ? filter.map(uid => this.mockRecords.get(uid)).filter(Boolean)
-            : Array.from(this.mockRecords.values())
+        const records = filter ? filter.map(uid => this.mockRecords.get(uid)).filter(Boolean) : Array.from(this.mockRecords.values())
 
         return {records, warnings: []}
     }
@@ -195,10 +193,7 @@ describe('Store Operation Parsing', () => {
     })
 
     test('Quoted store value preserves inner whitespace', () => {
-        const parsedInputs = parseSecretsInputs([
-            'Record1/field/password < "password with spaces  "',
-            "Record1/field/password < 'password with spaces  '"
-        ])
+        const parsedInputs = parseSecretsInputs(['Record1/field/password < "password with spaces  "', "Record1/field/password < 'password with spaces  '"])
 
         parsedInputs.forEach(parsedInput => {
             expect(parsedInput.destination).toBe('password with spaces  ')
@@ -222,30 +217,20 @@ describe('Store Operation Parsing', () => {
     })
 
     test('Quoted value with special characters', () => {
-        const parsedInputs = parseSecretsInputs([
-            'Record1/field/password < "p@ss<w>rd!#$%"',
-            "Record1/field/password < 'value with \"inner quotes\"'"
-        ])
+        const parsedInputs = parseSecretsInputs(['Record1/field/password < "p@ss<w>rd!#$%"', 'Record1/field/password < \'value with "inner quotes"\''])
         expect(parsedInputs[0].destination).toBe('p@ss<w>rd!#$%')
         expect(parsedInputs[1].destination).toBe('value with "inner quotes"')
     })
 
     test('Quoted value with leading/trailing whitespace preserved', () => {
-        const parsedInputs = parseSecretsInputs([
-            'Record1/field/notes < "  leading spaces"',
-            'Record1/field/notes < "trailing spaces  "',
-            'Record1/field/notes < "  both sides  "'
-        ])
+        const parsedInputs = parseSecretsInputs(['Record1/field/notes < "  leading spaces"', 'Record1/field/notes < "trailing spaces  "', 'Record1/field/notes < "  both sides  "'])
         expect(parsedInputs[0].destination).toBe('  leading spaces')
         expect(parsedInputs[1].destination).toBe('trailing spaces  ')
         expect(parsedInputs[2].destination).toBe('  both sides  ')
     })
 
     test('Single character quoted values', () => {
-        const parsedInputs = parseSecretsInputs([
-            'Record1/field/notes < "x"',
-            "Record1/field/notes < 'y'"
-        ])
+        const parsedInputs = parseSecretsInputs(['Record1/field/notes < "x"', "Record1/field/notes < 'y'"])
         expect(parsedInputs[0].destination).toBe('x')
         expect(parsedInputs[1].destination).toBe('y')
     })
@@ -273,6 +258,16 @@ describe('Store Operation Parsing', () => {
     test('Value with newline-like content in quotes', () => {
         const parsedInputs = parseSecretsInputs(['Record1/field/notes < "line1\\nline2"'])
         expect(parsedInputs[0].destination).toBe('line1\\nline2')
+    })
+
+    test('Store operator uses last < when title contains < [bug proof]', () => {
+        // Proof: indexOf('<') finds the FIRST '<', misparsing titles that contain '<'.
+        // e.g. 'My < Title/field/notes < value' => notation='My', source='Title/field/notes < value'
+        // Fix: lastIndexOf('<') mirrors the lastIndexOf('>') used for the retrieve operator.
+        const parsed = parseSecretsInputs(['My < Title/field/notes < somevalue'])
+        expect(parsed[0].notation).toBe('My < Title/field/notes')
+        expect(parsed[0].destination).toBe('somevalue')
+        expect(parsed[0].operationType).toBe(1)
     })
 })
 
@@ -655,8 +650,12 @@ describe('Source Value Resolution', () => {
 
     test('Stores literal value directly', async () => {
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
-            destination: 'hello world', operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: 'hello world',
+            operationType: 1,
+            destinationType: 3
         }
         await action.storeFieldValue({} as any, input)
 
@@ -668,8 +667,12 @@ describe('Source Value Resolution', () => {
         process.env.TEST_STORE_VALUE = 'from-environment'
 
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
-            destination: 'env:TEST_STORE_VALUE', operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: 'env:TEST_STORE_VALUE',
+            operationType: 1,
+            destinationType: 3
         }
         await action.storeFieldValue({} as any, input)
 
@@ -679,8 +682,12 @@ describe('Source Value Resolution', () => {
 
     test('env: source with unset variable stores empty and skips with default config', async () => {
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
-            destination: 'env:NONEXISTENT_VAR_12345', operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: 'env:NONEXISTENT_VAR_12345',
+            operationType: 1,
+            destinationType: 3
         }
 
         await action.storeFieldValue({} as any, input)
@@ -695,8 +702,12 @@ describe('Source Value Resolution', () => {
         fs.writeFileSync(testFilePath, 'content-from-file')
 
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
-            destination: `file:${testFilePath}`, operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: `file:${testFilePath}`,
+            operationType: 1,
+            destinationType: 3
         }
         await action.storeFieldValue({} as any, input)
 
@@ -706,9 +717,12 @@ describe('Source Value Resolution', () => {
 
     test('file: source with nonexistent file throws error', async () => {
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
             destination: 'file:' + path.join(process.cwd(), 'nonexistent-file-xyz.txt'),
-            operationType: 1, destinationType: 3
+            operationType: 1,
+            destinationType: 3
         }
 
         let errorThrown: any
@@ -718,6 +732,45 @@ describe('Source Value Resolution', () => {
             errorThrown = error
         }
         expect(errorThrown).toBeDefined()
+    })
+
+    test('env: source warns when environment variable is not set [bug proof]', async () => {
+        // Proof: before fix, only 'Skipping empty value' is logged — no hint that the
+        // variable itself is missing vs. intentionally empty.
+        const varName = 'KSM_TEST_UNSET_VAR_99999'
+        delete process.env[varName]
+        const input = {
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: `env:${varName}`,
+            operationType: 1,
+            destinationType: 3
+        }
+        await action.storeFieldValue({} as any, input)
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining(varName))
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining('not set'))
+    })
+
+    test('out: source prefix throws a not-supported error [bug proof]', async () => {
+        // Proof: before fix, out: calls this.logger.getInput(outputVar) which reads
+        // workflow *inputs*, not step outputs — undocumented and silently wrong.
+        const input = {
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: 'out:some_step_output',
+            operationType: 1,
+            destinationType: 3
+        }
+        let errorThrown: any
+        try {
+            await action.storeFieldValue({} as any, input)
+        } catch (error) {
+            errorThrown = error
+        }
+        expect(errorThrown).toBeDefined()
+        expect(errorThrown.message).toMatch(/not supported/)
     })
 })
 
@@ -748,8 +801,12 @@ describe('File Upload to Record', () => {
         fs.writeFileSync(testFilePath, 'file upload content')
 
         const input = {
-            uid: 'TestUID', selector: 'file', notation: 'TestUID/file',
-            destination: `file:${testFilePath}`, operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'file',
+            notation: 'TestUID/file',
+            destination: `file:${testFilePath}`,
+            operationType: 1,
+            destinationType: 3
         }
 
         await action.storeFieldValue({} as any, input)
@@ -763,9 +820,12 @@ describe('File Upload to Record', () => {
 
     test('File upload with nonexistent file throws error', async () => {
         const input = {
-            uid: 'TestUID', selector: 'file', notation: 'TestUID/file',
+            uid: 'TestUID',
+            selector: 'file',
+            notation: 'TestUID/file',
             destination: 'file:' + path.join(process.cwd(), 'no-such-file.bin'),
-            operationType: 1, destinationType: 3
+            operationType: 1,
+            destinationType: 3
         }
 
         let errorThrown: any
@@ -805,8 +865,12 @@ describe('Create Record (create-if-missing)', () => {
     test('Creates new record when record not found and create-if-missing is true', async () => {
         // No record in mock — will trigger create flow
         const input = {
-            uid: 'NewRecord', selector: 'field', notation: 'NewRecord/field/password',
-            destination: 'new-password-123', operationType: 1, destinationType: 3
+            uid: 'NewRecord',
+            selector: 'field',
+            notation: 'NewRecord/field/password',
+            destination: 'new-password-123',
+            operationType: 1,
+            destinationType: 3
         }
 
         await action.storeFieldValue({} as any, input)
@@ -826,8 +890,12 @@ describe('Create Record (create-if-missing)', () => {
         action = new KsmAction(mockOps, mockLogger)
 
         const input = {
-            uid: 'NewRecord', selector: 'field', notation: 'NewRecord/field/login',
-            destination: 'test@example.com', operationType: 1, destinationType: 3
+            uid: 'NewRecord',
+            selector: 'field',
+            notation: 'NewRecord/field/login',
+            destination: 'test@example.com',
+            operationType: 1,
+            destinationType: 3
         }
 
         let errorThrown: any
@@ -849,8 +917,12 @@ describe('Create Record (create-if-missing)', () => {
         action = new KsmAction(mockOps, mockLogger)
 
         const input = {
-            uid: 'Missing', selector: 'field', notation: 'Missing/field/password',
-            destination: 'value', operationType: 1, destinationType: 3
+            uid: 'Missing',
+            selector: 'field',
+            notation: 'Missing/field/password',
+            destination: 'value',
+            operationType: 1,
+            destinationType: 3
         }
 
         let errorThrown: any
@@ -916,10 +988,12 @@ describe('Sequential Store Operations on Same Record', () => {
 
     test('Operations on different records can proceed independently', async () => {
         mockOps.mockRecords.set('RecA', {
-            recordUid: 'RecA', data: {fields: [{type: 'notes', value: ['a']}]}
+            recordUid: 'RecA',
+            data: {fields: [{type: 'notes', value: ['a']}]}
         })
         mockOps.mockRecords.set('RecB', {
-            recordUid: 'RecB', data: {fields: [{type: 'notes', value: ['b']}]}
+            recordUid: 'RecB',
+            data: {fields: [{type: 'notes', value: ['b']}]}
         })
 
         action = new KsmAction(mockOps, mockLogger)
@@ -957,8 +1031,12 @@ describe('Allow Empty Values Flag', () => {
         const action = new KsmAction(mockOps, mockLogger)
 
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
-            destination: '', operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: '',
+            operationType: 1,
+            destinationType: 3
         }
 
         await action.storeFieldValue({} as any, input)
@@ -977,8 +1055,12 @@ describe('Allow Empty Values Flag', () => {
         const action = new KsmAction(mockOps, mockLogger)
 
         const input = {
-            uid: 'TestUID', selector: 'field', notation: 'TestUID/field/notes',
-            destination: '', operationType: 1, destinationType: 3
+            uid: 'TestUID',
+            selector: 'field',
+            notation: 'TestUID/field/notes',
+            destination: '',
+            operationType: 1,
+            destinationType: 3
         }
 
         await action.storeFieldValue({} as any, input)
@@ -1013,10 +1095,7 @@ describe('End-to-End run() with Store Operations', () => {
             if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
             return ''
         })
-        mockLogger.getMultilineInput = jest.fn(() => [
-            'BediNKCMG21ztm5xGYgNww/field/login > username',
-            'BediNKCMG21ztm5xGYgNww/field/notes < updated notes from CI'
-        ])
+        mockLogger.getMultilineInput = jest.fn(() => ['BediNKCMG21ztm5xGYgNww/field/login > username', 'BediNKCMG21ztm5xGYgNww/field/notes < updated notes from CI'])
 
         const action = new KsmAction(mockOps, mockLogger)
         await action.run()
@@ -1066,9 +1145,7 @@ describe('End-to-End run() with Store Operations', () => {
             if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
             return ''
         })
-        mockLogger.getMultilineInput = jest.fn(() => [
-            'BediNKCMG21ztm5xGYgNww/field/fileRef < should-fail'
-        ])
+        mockLogger.getMultilineInput = jest.fn(() => ['BediNKCMG21ztm5xGYgNww/field/fileRef < should-fail'])
         mockLogger.getBooleanInput = jest.fn((name: string) => {
             if (name === 'fail-on-store-error') return true
             return false
@@ -1085,9 +1162,7 @@ describe('End-to-End run() with Store Operations', () => {
             if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
             return ''
         })
-        mockLogger.getMultilineInput = jest.fn(() => [
-            'BediNKCMG21ztm5xGYgNww/field/fileRef < should-fail'
-        ])
+        mockLogger.getMultilineInput = jest.fn(() => ['BediNKCMG21ztm5xGYgNww/field/fileRef < should-fail'])
         mockLogger.getBooleanInput = jest.fn((name: string) => {
             if (name === 'fail-on-store-error') return false
             return false
@@ -1099,6 +1174,33 @@ describe('End-to-End run() with Store Operations', () => {
         // Should report error but NOT fail the action
         expect(mockLogger.error).toHaveBeenCalled()
         expect(mockLogger.setFailed).not.toHaveBeenCalled()
+    })
+
+    test('Multiple store ops on same record use 1 fetch + 1 update [performance bug proof]', async () => {
+        // Proof: before fix, run() calls storeFieldValue once per op, each doing its own
+        // getSecrets+updateSecret. 2 ops on same record = 2 fetches + 2 updates.
+        // After fix via storeFieldsForRecord(), run() batches them: 1 fetch + 1 update.
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+        mockLogger.getMultilineInput = jest.fn(() => ['BediNKCMG21ztm5xGYgNww/field/login < new-login', 'BediNKCMG21ztm5xGYgNww/field/notes < new-notes'])
+        mockLogger.getBooleanInput = jest.fn((name: string) => {
+            if (name === 'fail-on-store-error') return true
+            return false
+        })
+
+        const action = new KsmAction(mockOps, mockLogger)
+        await action.run()
+
+        const fetchCalls = mockOps.callLog.filter((c: any) => c.method === 'getSecrets')
+        const updateCalls = mockOps.callLog.filter((c: any) => c.method === 'updateSecret')
+        expect(fetchCalls).toHaveLength(1)
+        expect(updateCalls).toHaveLength(1)
+
+        const updated = mockOps.mockRecords.get('BediNKCMG21ztm5xGYgNww')
+        expect(updated.data.fields.find((f: any) => f.type === 'login').value[0]).toBe('new-login')
+        expect(updated.data.fields.find((f: any) => f.type === 'notes').value[0]).toBe('new-notes')
     })
 })
 
@@ -1147,9 +1249,7 @@ describe('Error Enhancement for Retrieve Operations', () => {
             if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
             return ''
         })
-        mockLogger.getMultilineInput = jest.fn(() => [
-            'TestUID/field/nonexistent > output_var'
-        ])
+        mockLogger.getMultilineInput = jest.fn(() => ['TestUID/field/nonexistent > output_var'])
 
         const action = new KsmAction(mockOps, mockLogger)
 

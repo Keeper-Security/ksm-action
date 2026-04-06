@@ -50,6 +50,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.createRunner = exports.KsmAction = exports.getRecordUids = exports.parseSecretsInputs = exports.KsmOperations = exports.KsmActionError = exports.KsmErrorType = void 0;
+exports.serializeValue = serializeValue;
 const core = __importStar(__nccwpck_require__(7484));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -124,6 +125,13 @@ const stripQuotes = (value) => {
     }
     return value;
 };
+function serializeValue(value) {
+    if (value == null)
+        return '';
+    if (typeof value === 'string')
+        return value;
+    return JSON.stringify(value);
+}
 const parseInput = (text) => {
     // Check for store operation (<)
     // Use a regex anchored to the notation's selector (field/file/custom_field)
@@ -605,13 +613,23 @@ class KsmAction {
                     const enhancedError = this.enhanceRetrieveError(error, input, secrets);
                     throw enhancedError;
                 }
-                this.logger.setSecret(secret);
+                const serialized = serializeValue(secret);
+                this.logger.setSecret(serialized);
+                // For structured values, also mask each string property individually
+                // so e.g. a private key appearing elsewhere in logs is still masked
+                if (typeof secret === 'object' && secret !== null) {
+                    for (const val of Object.values(secret)) {
+                        if (typeof val === 'string' && val.length > 0) {
+                            this.logger.setSecret(val);
+                        }
+                    }
+                }
                 switch (input.destinationType) {
                     case DestinationType.output:
-                        this.logger.setOutput(input.destination, secret);
+                        this.logger.setOutput(input.destination, serialized);
                         break;
                     case DestinationType.environment:
-                        this.logger.exportVariable(input.destination, secret);
+                        this.logger.exportVariable(input.destination, serialized);
                         break;
                     case DestinationType.file:
                         if (input.selector === 'file') {
@@ -619,7 +637,7 @@ class KsmAction {
                             fs.writeFileSync(input.destination, fileData);
                         }
                         else {
-                            fs.writeFileSync(input.destination, secret);
+                            fs.writeFileSync(input.destination, serialized);
                         }
                         break;
                 }

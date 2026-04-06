@@ -107,6 +107,12 @@ const stripQuotes = (value: string): string => {
     return value
 }
 
+export function serializeValue(value: unknown): string {
+    if (value == null) return ''
+    if (typeof value === 'string') return value
+    return JSON.stringify(value)
+}
+
 const parseInput = (text: string): [string, string, OperationType] => {
     // Check for store operation (<)
     // Use a regex anchored to the notation's selector (field/file/custom_field)
@@ -645,21 +651,33 @@ export class KsmAction {
                 const enhancedError = this.enhanceRetrieveError(error, input, secrets)
                 throw enhancedError
             }
-            this.logger.setSecret(secret as string)
+
+            const serialized = serializeValue(secret)
+            this.logger.setSecret(serialized)
+
+            // For structured values, also mask each string property individually
+            // so e.g. a private key appearing elsewhere in logs is still masked
+            if (typeof secret === 'object' && secret !== null) {
+                for (const val of Object.values(secret as Record<string, unknown>)) {
+                    if (typeof val === 'string' && val.length > 0) {
+                        this.logger.setSecret(val)
+                    }
+                }
+            }
 
             switch (input.destinationType) {
                 case DestinationType.output:
-                    this.logger.setOutput(input.destination, secret as string)
+                    this.logger.setOutput(input.destination, serialized)
                     break
                 case DestinationType.environment:
-                    this.logger.exportVariable(input.destination, secret as string)
+                    this.logger.exportVariable(input.destination, serialized)
                     break
                 case DestinationType.file:
                     if (input.selector === 'file') {
                         const fileData = await this.ksmOps.downloadFile(secret as KeeperFile)
                         fs.writeFileSync(input.destination, fileData)
                     } else {
-                        fs.writeFileSync(input.destination, secret as string)
+                        fs.writeFileSync(input.destination, serialized)
                     }
                     break
             }

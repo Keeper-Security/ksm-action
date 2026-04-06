@@ -269,6 +269,15 @@ describe('Store Operation Parsing', () => {
         expect(parsed[0].destination).toBe('somevalue')
         expect(parsed[0].operationType).toBe(1)
     })
+
+    test('Unquoted value containing < is preserved intact [document behavior]', () => {
+        // The first < after the field name is the operator; everything after it is the
+        // source value, including any further < characters. No quoting needed for <.
+        const parsed = parseSecretsInputs(['Record1/field/notes < a<b'])
+        expect(parsed[0].notation).toBe('Record1/field/notes')
+        expect(parsed[0].destination).toBe('a<b')
+        expect(parsed[0].operationType).toBe(1)
+    })
 })
 
 describe('KsmAction Store Operations', () => {

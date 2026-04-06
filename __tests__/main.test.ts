@@ -1,5 +1,5 @@
 import {expect, test, describe, beforeEach, afterEach, jest} from '@jest/globals'
-import {getRecordUids, parseSecretsInputs, KsmAction, KsmActionError, KsmErrorType, IKsmOperations, createRunner} from '../src/main'
+import {getRecordUids, parseSecretsInputs, KsmAction, KsmActionError, KsmErrorType, IKsmOperations, createRunner, serializeValue} from '../src/main'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -1263,5 +1263,198 @@ describe('Error Enhancement for Retrieve Operations', () => {
         // Should have logged available field types
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('login'))
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Available standard fields'))
+    })
+})
+
+// ── serializeValue unit tests ──────────────────────────────────────────
+
+describe('serializeValue', () => {
+    test('passes strings through unchanged', () => {
+        expect(serializeValue('my-password')).toBe('my-password')
+    })
+
+    test('preserves strings with newlines (no double-escaping)', () => {
+        const key = '-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----'
+        expect(serializeValue(key)).toBe(key)
+    })
+
+    test('serializes objects as JSON', () => {
+        expect(serializeValue({a: 1, b: 'two'})).toBe('{"a":1,"b":"two"}')
+    })
+
+    test('serializes arrays as JSON', () => {
+        expect(serializeValue([1, 2, 3])).toBe('[1,2,3]')
+    })
+
+    test('returns empty string for null', () => {
+        expect(serializeValue(null)).toBe('')
+    })
+
+    test('returns empty string for undefined', () => {
+        expect(serializeValue(undefined)).toBe('')
+    })
+
+    test('returns empty string for empty string', () => {
+        expect(serializeValue('')).toBe('')
+    })
+
+    test('serializes numbers via JSON.stringify', () => {
+        expect(serializeValue(42)).toBe('42')
+    })
+
+    test('serializes booleans via JSON.stringify', () => {
+        expect(serializeValue(true)).toBe('true')
+    })
+
+    test('preserves newlines inside object values', () => {
+        const obj = {privateKey: '-----BEGIN\n-----END'}
+        const result = serializeValue(obj)
+        expect(result).toBe(JSON.stringify(obj))
+        expect(result).toContain('\\n')
+    })
+})
+
+// ── Structured Field Serialization (Issue #148) ────────────────────────
+
+describe('Structured Field Serialization (Issue #148)', () => {
+    let mockOps: MockKsmOperations
+    let mockLogger: any
+
+    beforeEach(() => {
+        mockOps = new MockKsmOperations()
+        mockLogger = createTestLogger()
+
+        mockOps.mockRecords.set('TestUID', {
+            recordUid: 'TestUID',
+            data: {
+                type: 'sshKeys',
+                title: 'SSH Key Record',
+                fields: [
+                    {type: 'login', value: ['user@test.com']},
+                    {type: 'keyPair', value: [{publicKey: 'ssh-rsa AAAA', privateKey: '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIB\n-----END RSA PRIVATE KEY-----'}]}
+                ],
+                custom: [
+                    {type: 'phone', label: 'phone', value: [{number: '555-1234', type: 'Mobile'}]},
+                    {type: 'name', label: 'name', value: [{first: 'Jenny', last: 'Smith'}]}
+                ]
+            }
+        })
+    })
+
+    test('keyPair object is JSON-serialized for output destination', async () => {
+        const keyPairValue = {publicKey: 'ssh-rsa AAAA', privateKey: '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIB\n-----END RSA PRIVATE KEY-----'}
+        mockOps.getValue = () => keyPairValue
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+        mockLogger.getMultilineInput = jest.fn(() => ['TestUID/field/keyPair > SSH_KEY'])
+
+        const action = new KsmAction(mockOps, mockLogger)
+        await action.run()
+
+        const expectedJson = JSON.stringify(keyPairValue)
+        expect(mockLogger.setOutput).toHaveBeenCalledWith('SSH_KEY', expectedJson)
+        // Must contain escaped newline, not stripped
+        expect(expectedJson).toContain('\\n')
+    })
+
+    test('phone object is JSON-serialized for environment destination', async () => {
+        const phoneValue = {number: '555-1234', type: 'Mobile'}
+        mockOps.getValue = () => phoneValue
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+        mockLogger.getMultilineInput = jest.fn(() => ['TestUID/custom_field/phone > env:PHONE'])
+
+        const action = new KsmAction(mockOps, mockLogger)
+        await action.run()
+
+        expect(mockLogger.exportVariable).toHaveBeenCalledWith('PHONE', JSON.stringify(phoneValue))
+    })
+
+    test('structured value written to file is JSON, not [object Object]', async () => {
+        const nameValue = {first: 'Jenny', last: 'Smith'}
+        mockOps.getValue = () => nameValue
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+
+        // Write to a temp file and verify contents (avoids spyOn issue with CJS fs)
+        const tmpDir = path.join(process.cwd(), '__tests__', 'tmp')
+        if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, {recursive: true})
+        const tmpFile = path.join(tmpDir, 'name-test.json')
+
+        const origWorkspace = process.env.GITHUB_WORKSPACE
+        process.env.GITHUB_WORKSPACE = process.cwd()
+
+        try {
+            const relPath = path.relative(process.cwd(), tmpFile)
+            mockLogger.getMultilineInput = jest.fn(() => [`TestUID/custom_field/name > file:./${relPath}`])
+
+            const action = new KsmAction(mockOps, mockLogger)
+            await action.run()
+
+            const written = fs.readFileSync(tmpFile, 'utf8')
+            expect(written).toBe(JSON.stringify(nameValue))
+            expect(written).not.toBe('[object Object]')
+        } finally {
+            if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile)
+            if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir)
+            if (origWorkspace !== undefined) {
+                process.env.GITHUB_WORKSPACE = origWorkspace
+            } else {
+                delete process.env.GITHUB_WORKSPACE
+            }
+        }
+    })
+
+    test('simple string fields pass through unchanged (no double-quoting)', async () => {
+        mockOps.getValue = () => 'my-password-123'
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+        mockLogger.getMultilineInput = jest.fn(() => ['TestUID/field/login > PASSWORD'])
+
+        const action = new KsmAction(mockOps, mockLogger)
+        await action.run()
+
+        expect(mockLogger.setOutput).toHaveBeenCalledWith('PASSWORD', 'my-password-123')
+    })
+
+    test('null value returns empty string', async () => {
+        mockOps.getValue = () => null
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+        mockLogger.getMultilineInput = jest.fn(() => ['TestUID/field/login > OUTPUT'])
+
+        const action = new KsmAction(mockOps, mockLogger)
+        await action.run()
+
+        expect(mockLogger.setOutput).toHaveBeenCalledWith('OUTPUT', '')
+    })
+
+    test('setSecret masks individual string properties of structured values', async () => {
+        const keyPairValue = {publicKey: 'pub-key-data', privateKey: 'secret-key-data'}
+        mockOps.getValue = () => keyPairValue
+        mockLogger.getInput = jest.fn((name: string) => {
+            if (name === 'keeper-secret-config') return 'eyJ0ZXN0IjogdHJ1ZX0='
+            return ''
+        })
+        mockLogger.getMultilineInput = jest.fn(() => ['TestUID/field/keyPair > SSH_KEY'])
+
+        const action = new KsmAction(mockOps, mockLogger)
+        await action.run()
+
+        // Should mask the full JSON string
+        expect(mockLogger.setSecret).toHaveBeenCalledWith(JSON.stringify(keyPairValue))
+        // Should also mask each individual string property
+        expect(mockLogger.setSecret).toHaveBeenCalledWith('pub-key-data')
+        expect(mockLogger.setSecret).toHaveBeenCalledWith('secret-key-data')
     })
 })

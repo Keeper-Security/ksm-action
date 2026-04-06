@@ -11,8 +11,6 @@
     "lint": "eslint src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
     "test": "jest",
-    "test:integration": "npm run build && node test-integration.js",
-    "test:integration:jest": "jest integration.test.ts",
     "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
   },
   "repository": {
@@ -32,7 +30,6 @@
     "@types/node": "^24.0.0",
     "@typescript-eslint/parser": "^7.18.0",
     "@vercel/ncc": "^0.38.4",
-    "dotenv": "^17.2.1",
     "eslint": "^8.57.0",
     "eslint-plugin-github": "^4.10.2",
     "eslint-plugin-jest": "^28.14.0",

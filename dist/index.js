@@ -134,17 +134,24 @@ function serializeValue(value) {
 }
 const parseInput = (text) => {
     // Check for store operation (<)
-    // Use a regex anchored to the notation's selector (field/file/custom_field)
-    // so that '<' inside record titles or password values is not mistaken
-    // for the operator.
-    const storeMatch = text.match(/^(.+\/(?:field|file|custom_field)\/[^<>]+?)\s*<\s*(.+)$/i);
-    if (storeMatch) {
-        const notation = storeMatch[1].trim();
-        let source = storeMatch[2].trim();
-        // Strip matching quotes to preserve intentional whitespace in values
-        // e.g. record/field/password < "value with spaces  "
-        source = stripQuotes(source);
-        return [notation, source, OperationType.store];
+    // ReDoS-safe: find the last /field|file|custom_field/ selector using a simple scan,
+    // then look for the first < in the field-name portion (where < and > are not allowed).
+    // This avoids running a backtracking regex on uncontrolled input.
+    const selectorRe = /\/(?:field|file|custom_field)\//gi;
+    let lastSelectorEnd = -1;
+    let selectorExec;
+    while ((selectorExec = selectorRe.exec(text)) !== null) {
+        lastSelectorEnd = selectorExec.index + selectorExec[0].length;
+    }
+    if (lastSelectorEnd >= 0) {
+        const afterSelector = text.substring(lastSelectorEnd);
+        const opOffset = afterSelector.search(/[<>]/);
+        if (opOffset >= 0 && afterSelector[opOffset] === '<') {
+            const notation = text.substring(0, lastSelectorEnd + opOffset).trimEnd();
+            let source = afterSelector.substring(opOffset + 1).trim();
+            source = stripQuotes(source);
+            return [notation, source, OperationType.store];
+        }
     }
     // Check for retrieve operation (>)
     const retrieveIndex = text.lastIndexOf('>');

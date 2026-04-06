@@ -135,4 +135,27 @@ describe('Retry Mechanism for Out of Sync Errors', () => {
         // Should not have retry warnings
         expect(mockLogger.warning).not.toHaveBeenCalledWith(expect.stringContaining('retrying'))
     })
+
+    test('Should not treat errors containing "sync" in other contexts as out-of-sync errors [bug proof]', async () => {
+        // Proof: handleKsmError uses includes('sync') broadly (line 232) which matches
+        // 'asynchronous', triggering misleading "Record out of sync" warnings and
+        // incorrect KsmErrorType.NETWORK_ERROR with retryable:true.
+        // Fix: remove the broad includes('sync') check, keep only includes('out of sync').
+        mockOps.shouldFailWithSync = false
+        mockOps.updateSecret = jest.fn(() => Promise.reject(new Error('asynchronous operation timed out'))) as any
+
+        const input = {
+            uid: 'TestRecord',
+            selector: 'field',
+            notation: 'TestRecord/field/notes',
+            destination: 'new value',
+            operationType: 1,
+            destinationType: 3
+        }
+
+        await expect(action.storeFieldValue({} as any, input)).rejects.toThrow()
+
+        // Should NOT have produced misleading "out of sync" warnings
+        expect(mockLogger.warning).not.toHaveBeenCalledWith(expect.stringContaining('out of sync'))
+    })
 })

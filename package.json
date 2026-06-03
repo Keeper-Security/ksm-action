@@ -28,7 +28,7 @@
     "@actions/core": "^2.0.3",
     "@keeper-security/secrets-manager-core": "17.4.0",
     "@types/node": "^24.0.0",
-    "@typescript-eslint/parser": "^7.18.0",
+    "@typescript-eslint/parser": "^8.60.1",
     "@vercel/ncc": "^0.38.4",
     "eslint": "^8.57.0",
     "eslint-plugin-github": "^4.10.2",

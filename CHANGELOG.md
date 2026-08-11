@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 ## [1.3.1] - 2026-08-10
 
 ### Security
-- Resolved all 15 open Dependabot alerts (11 distinct advisories) via dependency updates. No
-  `package.json` range changes were required — every patched version was already in range:
+- Resolved all 20 Dependabot alerts (14 distinct advisories) via dependency updates: 15 open, plus
+  5 alerts (3 advisories) that GitHub auto-triage had dismissed on the misleading "development"
+  scope label (this repo bundles its runtime dependencies into `dist/`, so scope says nothing
+  about what ships). No `package.json` range changes were required; every patched version was
+  already in range:
   - `undici` 6.24.1 → 6.28.0 (CVE-2026-16729, CVE-2026-15157, CVE-2026-16728, CVE-2026-9679,
-    CVE-2026-11525, CVE-2026-6733)
+    CVE-2026-11525, CVE-2026-6733, and auto-dismissed CVE-2026-12151, high)
   - `js-yaml` 4.1.1 → 4.3.1 and 3.14.2 → 3.15.1 (CVE-2026-59869, CVE-2026-53550, GHSA-5p4m-2wfm-xmqj)
-  - `brace-expansion` 2.0.3 → 2.1.4 and 1.1.13 → 1.1.18 (CVE-2026-13149)
+  - `brace-expansion` 2.0.3 → 2.1.4 and 1.1.13 → 1.1.18 (CVE-2026-13149, and auto-dismissed
+    CVE-2026-14257 and CVE-2026-69152, both high)
   - `@babel/core` 7.24.0 → 7.29.7 (CVE-2026-49356)
 - Rebuilt `dist/index.js` so the patched `undici` — the only advisory-affected package that is
   inlined into the shipped bundle — actually ships. Every other update is build/test-only.

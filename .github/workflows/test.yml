@@ -22,6 +22,21 @@ jobs:
           node-version-file: '.node-version'
           cache: 'npm'
       - run: |
-          npm install
+          npm ci
       - run: |
           npm run all
+      - name: Verify committed dist/ matches a clean rebuild
+        id: dist-drift
+        run: |
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            echo "::error::dist/ is stale: the committed bundle does not match a rebuild from src/ and package-lock.json. Run 'npm run all' and commit dist/."
+            git status --porcelain dist/
+            git diff --ignore-space-at-eol --stat dist/
+            exit 1
+          fi
+      - name: Upload rebuilt dist/ on drift
+        if: failure() && steps.dist-drift.outcome == 'failure'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rebuilt-dist
+          path: dist/

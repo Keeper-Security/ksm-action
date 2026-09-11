@@ -4,7 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [1.3.2] - 2026-09-10
 
+### Added
+- New optional `max-throttle-wait-seconds` input (default: `60`). `secrets-manager-core` 17.5.0's
+  backend-throttle retry has no ceiling on the server-supplied wait, and its counter is shared per
+  Keeper Application client ID across every job using it, so concurrent workflow runs (a matrix
+  build, several parallel jobs) can collide on the same throttle window. Before this input, that
+  collision meant every affected job blocked silently, potentially for minutes, until either the
+  retry succeeded or the runner's own `timeout-minutes` killed the job with a generic timeout
+  message unrelated to Keeper. With this input (bounded by default, no opt-in required), a wait
+  that exceeds the cap fails immediately with a clear `THROTTLE_EXCEEDED` message naming the
+  requested wait and the configured cap. Raise the value to allow the SDK's full backoff schedule
+  (up to ~176s on its last of 5 attempts) to run instead of failing fast.
+
 ### Changed
+- Moved `@actions/core` and `@keeper-security/secrets-manager-core` from `devDependencies` to a
+  new `dependencies` section. Both are bundled into the shipped `dist/index.js`; leaving them under
+  `devDependencies` (this repo's prior convention for every dependency, bundled or not) skews
+  SCA/license-scan tooling that reads `package.json` for what actually ships. Matches the
+  convention in GitHub's own `actions/typescript-action` template, which separates bundled runtime
+  packages from build/lint/test-only tooling the same way.
 - `@keeper-security/secrets-manager-core` 17.4.0 → 17.5.0. This is the only bumped dependency that
   ships in `dist/index.js`; every other dependency below is build/lint/test-only. Relevant upstream
   changes for this action's call surface (`getSecrets`, `getValue`, `loadJsonConfig`,
@@ -48,7 +66,7 @@ All notable changes to this project will be documented in this file.
   config) is what caught it.
 
 ### Verification
-- `npm run all` (build, format, lint, package, test) passes: 123/123 tests, 0 lint errors,
+- `npm run all` (build, format, lint, package, test) passes: 128/128 tests, 0 lint errors,
   clean TypeScript build, `dist/` rebuild is byte-identical across repeated runs from the same
   lockfile. `npm audit`: 0 vulnerabilities.
 

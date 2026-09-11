@@ -49,7 +49,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createRunner = exports.KsmAction = exports.getRecordUids = exports.parseSecretsInputs = exports.KsmOperations = exports.KsmActionError = exports.KsmErrorType = void 0;
+exports.createRunner = exports.KsmAction = exports.getRecordUids = exports.parseSecretsInputs = exports.KsmOperations = exports.buildThrottleSleep = exports.KsmActionError = exports.KsmErrorType = void 0;
 exports.serializeValue = serializeValue;
 const core = __importStar(__nccwpck_require__(7484));
 const fs = __importStar(__nccwpck_require__(9896));
@@ -75,6 +75,7 @@ var KsmErrorType;
     KsmErrorType["FIELD_NOT_FOUND"] = "FIELD_NOT_FOUND";
     KsmErrorType["NETWORK_ERROR"] = "NETWORK_ERROR";
     KsmErrorType["INVALID_CONFIG"] = "INVALID_CONFIG";
+    KsmErrorType["THROTTLE_EXCEEDED"] = "THROTTLE_EXCEEDED";
 })(KsmErrorType || (exports.KsmErrorType = KsmErrorType = {}));
 class KsmActionError extends Error {
     constructor(type, message, details) {
@@ -86,6 +87,30 @@ class KsmActionError extends Error {
     }
 }
 exports.KsmActionError = KsmActionError;
+// The SDK's own backend-throttle retry has no ceiling on the server-supplied wait (secrets-manager-core 17.5.0+).
+// Rejecting instead of sleeping past this cap turns a silent multi-minute hang (ending in a confusing
+// runner timeout) into an immediate, clear failure.
+const buildThrottleSleep = (maxWaitMs) => {
+    return (ms) => __awaiter(void 0, void 0, void 0, function* () {
+        if (ms > maxWaitMs) {
+            throw new KsmActionError(KsmErrorType.THROTTLE_EXCEEDED, `Keeper backend requested a ${(ms / 1000).toFixed(1)}s throttle wait, exceeding max-throttle-wait-seconds (${maxWaitMs / 1000}s)`);
+        }
+        return new Promise(resolve => setTimeout(resolve, ms));
+    });
+};
+exports.buildThrottleSleep = buildThrottleSleep;
+// Mirrors action.yml's own default so behavior is identical whether @actions/core applied the
+// YAML default (real runtime) or the input simply came back empty (e.g. in tests).
+const DEFAULT_MAX_THROTTLE_WAIT_SECONDS = 60;
+const parseMaxThrottleWaitSeconds = (rawInput) => {
+    if (!rawInput)
+        return DEFAULT_MAX_THROTTLE_WAIT_SECONDS;
+    const seconds = Number(rawInput);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Invalid value for max-throttle-wait-seconds: '${rawInput}'. Must be a positive number.`);
+    }
+    return seconds;
+};
 // Production implementation
 class KsmOperations {
     getSecrets(options, filter) {
@@ -661,7 +686,11 @@ class KsmAction {
                     return;
                 }
                 const inputs = (0, exports.parseSecretsInputs)(this.logger.getMultilineInput('secrets'));
-                const options = { storage: (0, secrets_manager_core_1.loadJsonConfig)(config) };
+                const maxThrottleWaitSeconds = parseMaxThrottleWaitSeconds(this.logger.getInput('max-throttle-wait-seconds'));
+                const options = {
+                    storage: (0, secrets_manager_core_1.loadJsonConfig)(config),
+                    throttleSleep: (0, exports.buildThrottleSleep)(maxThrottleWaitSeconds * 1000)
+                };
                 // Separate operations by type
                 const retrieveOps = inputs.filter(i => i.operationType === OperationType.retrieve);
                 const storeOps = inputs.filter(i => i.operationType === OperationType.store);

@@ -24,9 +24,11 @@
   ],
   "author": "Keeper Security, Inc.",
   "license": "MIT",
-  "devDependencies": {
+  "dependencies": {
     "@actions/core": "^2.0.3",
-    "@keeper-security/secrets-manager-core": "17.5.0",
+    "@keeper-security/secrets-manager-core": "17.5.0"
+  },
+  "devDependencies": {
     "@types/node": "^24.0.0",
     "@typescript-eslint/parser": "^8.68.0",
     "@vercel/ncc": "^0.38.4",

@@ -49,7 +49,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createRunner = exports.KsmAction = exports.getRecordUids = exports.parseSecretsInputs = exports.KsmOperations = exports.KsmActionError = exports.KsmErrorType = void 0;
+exports.createRunner = exports.KsmAction = exports.getRecordUids = exports.parseSecretsInputs = exports.KsmOperations = exports.buildThrottleSleep = exports.KsmActionError = exports.KsmErrorType = void 0;
 exports.serializeValue = serializeValue;
 const core = __importStar(__nccwpck_require__(7484));
 const fs = __importStar(__nccwpck_require__(9896));
@@ -75,6 +75,7 @@ var KsmErrorType;
     KsmErrorType["FIELD_NOT_FOUND"] = "FIELD_NOT_FOUND";
     KsmErrorType["NETWORK_ERROR"] = "NETWORK_ERROR";
     KsmErrorType["INVALID_CONFIG"] = "INVALID_CONFIG";
+    KsmErrorType["THROTTLE_EXCEEDED"] = "THROTTLE_EXCEEDED";
 })(KsmErrorType || (exports.KsmErrorType = KsmErrorType = {}));
 class KsmActionError extends Error {
     constructor(type, message, details) {
@@ -86,6 +87,30 @@ class KsmActionError extends Error {
     }
 }
 exports.KsmActionError = KsmActionError;
+// The SDK's own backend-throttle retry has no ceiling on the server-supplied wait (secrets-manager-core 17.5.0+).
+// Rejecting instead of sleeping past this cap turns a silent multi-minute hang (ending in a confusing
+// runner timeout) into an immediate, clear failure.
+const buildThrottleSleep = (maxWaitMs) => {
+    return (ms) => __awaiter(void 0, void 0, void 0, function* () {
+        if (ms > maxWaitMs) {
+            throw new KsmActionError(KsmErrorType.THROTTLE_EXCEEDED, `Keeper backend requested a ${(ms / 1000).toFixed(1)}s throttle wait, exceeding max-throttle-wait-seconds (${maxWaitMs / 1000}s)`);
+        }
+        return new Promise(resolve => setTimeout(resolve, ms));
+    });
+};
+exports.buildThrottleSleep = buildThrottleSleep;
+// Mirrors action.yml's own default so behavior is identical whether @actions/core applied the
+// YAML default (real runtime) or the input simply came back empty (e.g. in tests).
+const DEFAULT_MAX_THROTTLE_WAIT_SECONDS = 60;
+const parseMaxThrottleWaitSeconds = (rawInput) => {
+    if (!rawInput)
+        return DEFAULT_MAX_THROTTLE_WAIT_SECONDS;
+    const seconds = Number(rawInput);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Invalid value for max-throttle-wait-seconds: '${rawInput}'. Must be a positive number.`);
+    }
+    return seconds;
+};
 // Production implementation
 class KsmOperations {
     getSecrets(options, filter) {
@@ -661,7 +686,11 @@ class KsmAction {
                     return;
                 }
                 const inputs = (0, exports.parseSecretsInputs)(this.logger.getMultilineInput('secrets'));
-                const options = { storage: (0, secrets_manager_core_1.loadJsonConfig)(config) };
+                const maxThrottleWaitSeconds = parseMaxThrottleWaitSeconds(this.logger.getInput('max-throttle-wait-seconds'));
+                const options = {
+                    storage: (0, secrets_manager_core_1.loadJsonConfig)(config),
+                    throttleSleep: (0, exports.buildThrottleSleep)(maxThrottleWaitSeconds * 1000)
+                };
                 // Separate operations by type
                 const retrieveOps = inputs.filter(i => i.operationType === OperationType.retrieve);
                 const storeOps = inputs.filter(i => i.operationType === OperationType.store);
@@ -793,8 +822,6 @@ const PROTECTED_FIELD_TYPES = new Set([
     'addressRef', // References to address records
     'cardRef' // References to payment card records
 ]);
-// Field types that require special validation
-const SENSITIVE_FIELD_TYPES = new Set(['password', 'oneTimeCode', 'securityQuestion', 'pinCode', 'privateKey', 'secret']);
 // Standard KSM field types that hold plain string values.
 // Structured types (Phone, Host, Name, Address, PaymentCard, BankAccount, KeyPair,
 // Schedule, Script, PamResource, PamHostname) are intentionally excluded: their
@@ -4573,7 +4600,7 @@ function copyFile(srcFile, destFile, force) {
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 17.4.0 - January 22, 2026 16:50:19 */
+/* Version: 17.5.0 - July 1, 2026 16:22:19 */
 
 
 var https = __nccwpck_require__(5692);
@@ -4712,8 +4739,43 @@ const setCustomProxyAgent$1 = (proxyAgent) => {
     exports.platform.setCustomProxyAgent(proxyAgent);
 };
 
+/**
+ * Base class for all errors raised by the Keeper Secrets Manager SDK. Extends Error so existing
+ * `catch` handlers keep working; callers that want to distinguish SDK-originated errors from
+ * unexpected runtime failures can check `instanceof KeeperError`.
+ *
+ * This module intentionally has no internal imports so any module can throw KeeperError without
+ * creating a circular dependency.
+ */
+class KeeperError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'KeeperError';
+        // Restore the prototype chain so `instanceof` works across transpilation targets.
+        Object.setPrototypeOf(this, KeeperError.prototype);
+    }
+}
+/**
+ * Thrown when the Keeper backend throttles requests (HTTP 403 {"error":"throttled"}) and the
+ * SDK has exhausted its automatic retries (MAX_THROTTLE_RETRIES). Extends KeeperError so existing
+ * `catch` handlers keep working; callers that want to react specifically to throttling can
+ * check `instanceof KeeperThrottleError`.
+ */
+class KeeperThrottleError extends KeeperError {
+    constructor(message) {
+        super(message);
+        this.name = 'KeeperThrottleError';
+        // Restore the prototype chain so `instanceof` works across transpilation targets.
+        Object.setPrototypeOf(this, KeeperThrottleError.prototype);
+    }
+}
+
 const webSafe64 = (source) => source.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const webSafe64ToRegular = (source) => source.replace(/-/g, '+').replace(/_/g, '/') + '=='.substring(0, (3 * source.length) % 4);
+const webSafe64ToRegular = (source) => {
+    if (source == null)
+        throw new KeeperError(`webSafe64ToRegular: received ${source === null ? 'null' : 'undefined'}`);
+    return source.replace(/-/g, '+').replace(/_/g, '/') + '=='.substring(0, (3 * source.length) % 4);
+};
 const webSafe64ToBytes = (source) => exports.platform.base64ToBytes(webSafe64ToRegular(source));
 const webSafe64FromBytes = (source) => webSafe64(exports.platform.bytesToBase64(source));
 // extracts public raw from private key for prime256v1 curve in der/pkcs8
@@ -4896,7 +4958,11 @@ const setCustomProxyAgent = (proxyAgent) => {
     customProxyAgent = proxyAgent;
 };
 const bytesToBase64 = (data) => Buffer.from(data).toString('base64');
-const base64ToBytes = (data) => Buffer.from(data, 'base64');
+const base64ToBytes = (data) => {
+    if (data == null)
+        throw new KeeperError(`base64ToBytes: received ${data === null ? 'null' : 'undefined'}`);
+    return Buffer.from(data, 'base64');
+};
 const bytesToString = (data) => Buffer.from(data).toString();
 const stringToBytes = (data) => Buffer.from(data);
 const getRandomBytes = (length) => crypto.randomBytes(length);
@@ -5466,14 +5532,20 @@ function parseNotation(notation, legacyMode = false) {
     return result;
 }
 
-let packageVersion = '17.4.0';
+let packageVersion = '17.5.0';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBLIC_KEY_ID = 'serverPublicKeyId';
+const KEY_SERVER_PUBLIC_KEY = 'serverPublicKey';
 const KEY_CLIENT_ID = 'clientId';
 const KEY_CLIENT_KEY = 'clientKey'; // The key that is used to identify the client before public key
 const KEY_APP_KEY = 'appKey'; // The application key with which all secrets are encrypted
 const KEY_OWNER_PUBLIC_KEY = 'appOwnerPublicKey'; // The application owner public key, to create records
 const KEY_PRIVATE_KEY = 'privateKey'; // The client's private key
+// Throttle retry. The backend throttles HTTP 403 {"error":"throttled"}
+// per clientId+endpoint (100 requests / 10s window; memcached TTL 10s that resets on every
+// request, so the counter only clears after 10s of silence).
+const MAX_THROTTLE_RETRIES = 5;
+const BASE_THROTTLE_DELAY_SEC = 11; // 1s safety margin over the backend's 10s memcached TTL
 const CLIENT_ID_HASH_TAG = 'KEEPER_SECRETS_MANAGER_CLIENT_ID'; // Tag for hashing the client key to client id
 let keeperPublicKeys;
 const initialize = (pkgVersion) => {
@@ -5499,11 +5571,239 @@ const initialize = (pkgVersion) => {
         return keys;
     }, {});
 };
+// Returns a jitter multiplier in [-0.25, 0.25). Kept separate so concurrent clients
+// desynchronize their retries; unit tests exercise throttleDelay with a pinned jitter.
+const throttleJitter = () => Math.random() * 0.5 - 0.25;
+/**
+ * If `body` is a backend throttle error (`result_code`/`error` === "throttled") returns its
+ * `retry_after` in seconds (>= 0); otherwise returns `null` so the caller falls through to
+ * normal error handling. Non-JSON / non-object bodies return `null`.
+ */
+const parseThrottle = (body) => {
+    var _a;
+    let obj;
+    try {
+        obj = JSON.parse(body);
+    }
+    catch (_b) {
+        return null;
+    }
+    if (!obj || typeof obj !== 'object') {
+        return null;
+    }
+    const resultCode = (_a = obj.result_code) !== null && _a !== void 0 ? _a : obj.error;
+    if (resultCode !== 'throttled') {
+        return null;
+    }
+    const retryAfter = Number(obj.retry_after);
+    return Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 0;
+};
+/**
+ * Computes the backoff delay (milliseconds) for a 0-based `attempt`: `retryAfter` seconds when
+ * provided (> 0), otherwise exponential backoff (BASE_THROTTLE_DELAY_SEC * 2**attempt -> 11, 22,
+ * 44, 88, 176s). The `jitter` fraction (typically in [-0.25, 0.25)) is then applied.
+ */
+const throttleDelay = (attempt, retryAfter, jitter = throttleJitter()) => {
+    const baseSec = retryAfter > 0 ? retryAfter : BASE_THROTTLE_DELAY_SEC * Math.pow(2, attempt);
+    const sec = baseSec + baseSec * jitter;
+    return Math.max(sec, 0) * 1000;
+};
 exports.UpdateTransactionType = void 0;
 (function (UpdateTransactionType) {
     UpdateTransactionType["General"] = "general";
     UpdateTransactionType["Rotation"] = "rotation";
 })(exports.UpdateTransactionType || (exports.UpdateTransactionType = {}));
+class KeeperRecordLink {
+    constructor(raw, ownerRecordUid) {
+        this.recordUid = raw.recordUid;
+        this.data = raw.data;
+        this.path = raw.path;
+        this.ownerRecordUid = ownerRecordUid;
+    }
+    toString() {
+        return `[KeeperRecordLink: recordUid=${this.recordUid}, path=${this.path}]`;
+    }
+    _parseJsonData() {
+        const decoded = this.getDecodedData();
+        if (decoded == null)
+            return null;
+        if (!decoded.startsWith('{') && !decoded.startsWith('['))
+            return null;
+        try {
+            const parsed = JSON.parse(decoded);
+            return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+                ? parsed
+                : null;
+        }
+        catch (_a) {
+            return null;
+        }
+    }
+    _getBooleanValue(key, checkAllowedSettings = false) {
+        const parsed = this._parseJsonData();
+        if (parsed == null)
+            return false;
+        const value = parsed[key];
+        if (typeof value === 'boolean')
+            return value;
+        if (checkAllowedSettings) {
+            const allowedSettings = parsed['allowedSettings'];
+            if (typeof allowedSettings === 'object' && allowedSettings !== null) {
+                const nested = allowedSettings[key];
+                if (typeof nested === 'boolean')
+                    return nested;
+            }
+        }
+        return false;
+    }
+    _getIntValue(key) {
+        const parsed = this._parseJsonData();
+        const value = parsed ? parsed[key] : undefined;
+        return typeof value === 'number' && !Number.isNaN(value) ? Math.trunc(value) : null;
+    }
+    static _isReadableJson(text) {
+        return text.startsWith('{') || text.startsWith('[');
+    }
+    static _isPrintableText(text) {
+        if (!text)
+            return false;
+        const sample = text.slice(0, 100);
+        let printable = 0;
+        for (const c of sample) {
+            const code = c.charCodeAt(0);
+            if ((code >= 0x20 && code <= 0x7e) || c === '\n' || c === '\r' || c === '\t')
+                printable++;
+        }
+        return printable / sample.length > 0.9;
+    }
+    static _parseJsonToRecord(jsonStr) {
+        try {
+            const parsed = JSON.parse(jsonStr);
+            return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+                ? parsed
+                : null;
+        }
+        catch (_a) {
+            return null;
+        }
+    }
+    isAdminUser() { return this._getBooleanValue('is_admin'); }
+    isLaunchCredential() { return this._getBooleanValue('is_launch_credential'); }
+    isIamUser() { return this._getBooleanValue('is_iam_user'); }
+    belongsTo() { return this._getBooleanValue('belongs_to'); }
+    noUpdateServices() { return this._getBooleanValue('no_update_services'); }
+    allowsRotation() { return this._getBooleanValue('rotation', true); }
+    allowsConnections() { return this._getBooleanValue('connections', true); }
+    allowsPortForwards() { return this._getBooleanValue('portForwards', true); }
+    allowsSessionRecording() { return this._getBooleanValue('sessionRecording', true); }
+    allowsTypescriptRecording() { return this._getBooleanValue('typescriptRecording', true); }
+    allowsRemoteBrowserIsolation() { return this._getBooleanValue('remoteBrowserIsolation', true); }
+    aiEnabled() { return this._getBooleanValue('aiEnabled', true); }
+    aiSessionTerminate() { return this._getBooleanValue('aiSessionTerminate', true); }
+    rotatesOnTermination() { return this._getBooleanValue('rotateOnTermination'); }
+    getLinkDataVersion() { return this._getIntValue('version'); }
+    getDecodedData() {
+        if (this.data == null)
+            return null;
+        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(this.data))
+            return null;
+        try {
+            return exports.platform.bytesToString(exports.platform.base64ToBytes(this.data));
+        }
+        catch (_a) {
+            return null;
+        }
+    }
+    hasReadableData() {
+        const decoded = this.getDecodedData();
+        return decoded != null && KeeperRecordLink._isReadableJson(decoded);
+    }
+    mightBeEncrypted() {
+        return this.path === 'ai_settings' || this.path === 'jit_settings';
+    }
+    hasEncryptedData() {
+        const decoded = this.getDecodedData();
+        if (decoded == null)
+            return false;
+        if (KeeperRecordLink._isReadableJson(decoded))
+            return false;
+        return !KeeperRecordLink._isPrintableText(decoded);
+    }
+    getDecryptedData(recordKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.data == null)
+                return null;
+            try {
+                const encrypted = exports.platform.base64ToBytes(this.data);
+                const decrypted = recordKey
+                    ? yield exports.platform.decryptWithKey(encrypted, recordKey)
+                    : yield exports.platform.decrypt(encrypted, this.ownerRecordUid);
+                return exports.platform.bytesToString(decrypted);
+            }
+            catch (_a) {
+                return null;
+            }
+        });
+    }
+    getLinkData(recordKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const decoded = this.getDecodedData();
+            if (decoded == null)
+                return null;
+            if (KeeperRecordLink._isReadableJson(decoded)) {
+                const parsed = KeeperRecordLink._parseJsonToRecord(decoded);
+                if (parsed != null)
+                    return parsed;
+            }
+            const decrypted = yield this.getDecryptedData(recordKey);
+            if (decrypted == null)
+                return null;
+            return KeeperRecordLink._parseJsonToRecord(decrypted);
+        });
+    }
+    getAiSettingsData(recordKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.getSettingsForPath('ai_settings', recordKey);
+        });
+    }
+    getJitSettingsData(recordKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.getSettingsForPath('jit_settings', recordKey);
+        });
+    }
+    getMetaData(recordKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.getSettingsForPath('meta', recordKey);
+        });
+    }
+    getSettingsForPath(settingsPath, recordKey) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.path !== settingsPath)
+                return null;
+            return this.getLinkData(recordKey);
+        });
+    }
+    getAllowedSettings() {
+        const parsed = this._parseJsonData();
+        const s = parsed ? parsed['allowedSettings'] : undefined;
+        return (typeof s === 'object' && s !== null && !Array.isArray(s))
+            ? s
+            : {};
+    }
+    getRotationSettings() {
+        const parsed = this._parseJsonData();
+        const s = parsed ? parsed['rotation_settings'] : undefined;
+        return (typeof s === 'object' && s !== null && !Array.isArray(s))
+            ? s
+            : null;
+    }
+}
+function getLinks(record) {
+    const raw = record.links || [];
+    return raw
+        .filter(link => typeof link.recordUid === 'string' && link.recordUid.length > 0)
+        .map(link => new KeeperRecordLink(link, record.recordUid));
+}
 const getUidBytes = () => {
     const dash = new Uint8Array([248, 127]);
     let bytes = new Uint8Array(16);
@@ -5733,6 +6033,12 @@ const generateTransmissionKey = (storage) => __awaiter(void 0, void 0, void 0, f
     const transmissionKey = exports.platform.getRandomBytes(32);
     const keyNumberString = yield storage.getString(KEY_SERVER_PUBLIC_KEY_ID);
     const keyNumber = keyNumberString ? Number(keyNumberString) : 7;
+    const customPublicKeyB64 = yield storage.getString(KEY_SERVER_PUBLIC_KEY);
+    if (customPublicKeyB64) {
+        const customPublicKey = webSafe64ToBytes(customPublicKeyB64);
+        const encryptedKey = yield exports.platform.publicEncrypt(transmissionKey, customPublicKey);
+        return { publicKeyId: keyNumber, key: transmissionKey, encryptedKey };
+    }
     const keeperPublicKey = keeperPublicKeys[keyNumber];
     if (!keeperPublicKey) {
         throw new Error(`Key number ${keyNumber} is not supported`);
@@ -5754,11 +6060,19 @@ const encryptAndSignPayload = (storage, transmissionKey, payload) => __awaiter(v
     return { payload: encryptedPayload, signature };
 });
 const postQuery = (options, path, payload) => __awaiter(void 0, void 0, void 0, function* () {
+    if (options.serverPublicKey) {
+        yield options.storage.saveString(KEY_SERVER_PUBLIC_KEY, options.serverPublicKey);
+    }
+    if (options.serverPublicKeyId) {
+        yield options.storage.saveString(KEY_SERVER_PUBLIC_KEY_ID, options.serverPublicKeyId);
+    }
     const hostName = yield options.storage.getString(KEY_HOSTNAME);
     if (!hostName) {
         throw new Error('hostname is missing from the configuration');
     }
     const url = `https://${hostName}/api/rest/sm/v1/${path}`;
+    const sleep = options.throttleSleep || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
+    let throttleAttempt = 0;
     while (true) {
         const transmissionKey = yield generateTransmissionKey(options.storage);
         const encryptedPayload = yield encryptAndSignPayload(options.storage, transmissionKey, payload);
@@ -5767,14 +6081,35 @@ const postQuery = (options, path, payload) => __awaiter(void 0, void 0, void 0, 
             let errorMessage;
             if (response.data) {
                 errorMessage = exports.platform.bytesToString(response.data.slice(0, 1000));
-                try {
-                    const errorObj = JSON.parse(errorMessage);
-                    if (errorObj.error === 'key') {
-                        yield options.storage.saveString(KEY_SERVER_PUBLIC_KEY_ID, errorObj.key_id.toString());
+                // Throttle retry with exponential backoff + jitter. Checked
+                // before key-rotation so that path is untouched, and gated on the 403 status so a
+                // non-403 response carrying a {"error":"throttled"} body is not retried.
+                if (response.statusCode === 403) {
+                    const retryAfter = parseThrottle(errorMessage);
+                    if (retryAfter !== null) {
+                        if (throttleAttempt >= MAX_THROTTLE_RETRIES) {
+                            throw new KeeperThrottleError(`Request throttled by Keeper backend; exhausted ${MAX_THROTTLE_RETRIES} retries`);
+                        }
+                        const delay = throttleDelay(throttleAttempt, retryAfter);
+                        console.error(`WARNING: Request throttled (attempt ${throttleAttempt + 1}/${MAX_THROTTLE_RETRIES}); retrying in ${(delay / 1000).toFixed(1)}s`);
+                        yield sleep(delay);
+                        throttleAttempt++;
                         continue;
                     }
                 }
-                catch (_a) {
+                let errorObj = null;
+                try {
+                    errorObj = JSON.parse(errorMessage);
+                }
+                catch (_a) { }
+                if ((errorObj === null || errorObj === void 0 ? void 0 : errorObj.error) === 'key') {
+                    const customKey = yield options.storage.getString(KEY_SERVER_PUBLIC_KEY);
+                    if (customKey) {
+                        const currentKeyId = yield options.storage.getString(KEY_SERVER_PUBLIC_KEY_ID);
+                        throw new Error(`Server rejected the custom server public key (id ${currentKeyId}). The server suggested key id ${errorObj.key_id}. Please update your IL5 KSM configuration.`);
+                    }
+                    yield options.storage.saveString(KEY_SERVER_PUBLIC_KEY_ID, errorObj.key_id.toString());
+                    continue;
                 }
             }
             else {
@@ -5822,6 +6157,12 @@ const decryptRecord = (record, storage) => __awaiter(void 0, void 0, void 0, fun
 });
 const fetchAndDecryptSecrets = (options, queryOptions) => __awaiter(void 0, void 0, void 0, function* () {
     const storage = options.storage;
+    if (options.serverPublicKey) {
+        yield storage.saveString(KEY_SERVER_PUBLIC_KEY, options.serverPublicKey);
+    }
+    if (options.serverPublicKeyId) {
+        yield storage.saveString(KEY_SERVER_PUBLIC_KEY_ID, options.serverPublicKeyId);
+    }
     const payload = yield prepareGetPayload(storage, queryOptions);
     const responseData = yield postQuery(options, 'get_secret', payload);
     const response = JSON.parse(exports.platform.bytesToString(responseData));
@@ -5850,9 +6191,13 @@ const fetchAndDecryptSecrets = (options, queryOptions) => __awaiter(void 0, void
     if (response.folders) {
         for (const folder of response.folders) {
             try {
+                if (!folder.folderKey)
+                    throw new Error(`Folder key missing for UID ${folder.folderUid} — reinitialize with a fresh One-Time Token`);
                 yield exports.platform.unwrap(exports.platform.base64ToBytes(folder.folderKey), folder.folderUid, KEY_APP_KEY, storage, true);
                 for (const record of folder.records) {
                     try {
+                        if (!record.recordKey)
+                            throw new Error(`Record key missing for UID ${record.recordUid} in folder ${folder.folderUid}`);
                         yield exports.platform.unwrap(exports.platform.base64ToBytes(record.recordKey), record.recordUid, folder.folderUid);
                         const decryptedRecord = yield decryptRecord(record);
                         decryptedRecord.folderUid = folder.folderUid;
@@ -5951,12 +6296,29 @@ const initializeStorage = (storage, oneTimeToken, hostName) => __awaiter(void 0,
             AU: 'keepersecurity.com.au',
             GOV: 'govcloud.keepersecurity.us',
             JP: 'keepersecurity.jp',
-            CA: 'keepersecurity.ca'
+            CA: 'keepersecurity.ca',
+            IL5: 'il5.keepersecurity.us'
         }[tokenParts[0].toUpperCase()];
         if (!host) {
             host = tokenParts[0];
         }
         clientKey = tokenParts[1];
+        if (tokenParts[0].toUpperCase() === 'IL5') {
+            if (tokenParts.length > 4) {
+                throw new Error(`IL5 token has unexpected extra segments (${tokenParts.length} parts, expected 2 or 4)`);
+            }
+            if (tokenParts.length === 4) {
+                const keyId = tokenParts[2];
+                if (!/^\d+$/.test(keyId)) {
+                    throw new Error(`IL5 token: serverPublicKeyId '${keyId}' must be a positive integer`);
+                }
+                if (tokenParts[3].length < 80) {
+                    throw new Error(`IL5 token: serverPublicKey appears malformed`);
+                }
+                yield storage.saveString(KEY_SERVER_PUBLIC_KEY_ID, keyId);
+                yield storage.saveString(KEY_SERVER_PUBLIC_KEY, tokenParts[3]);
+            }
+        }
     }
     const clientKeyBytes = webSafe64ToBytes(clientKey);
     const clientKeyHash = yield exports.platform.hash(clientKeyBytes, CLIENT_ID_HASH_TAG);
@@ -6694,7 +7056,10 @@ exports.ExpirationDateField = ExpirationDateField;
 exports.FileRefField = FileRefField;
 exports.HostField = HostField;
 exports.IsSSIDHiddenField = IsSSIDHiddenField;
+exports.KeeperError = KeeperError;
 exports.KeeperRecordField = KeeperRecordField;
+exports.KeeperRecordLink = KeeperRecordLink;
+exports.KeeperThrottleError = KeeperThrottleError;
 exports.KeyPairField = KeyPairField;
 exports.LicenseNumberField = LicenseNumberField;
 exports.LoginField = LoginField;
@@ -6739,6 +7104,7 @@ exports.generatePassword = generatePassword;
 exports.generateTransmissionKey = generateTransmissionKey;
 exports.getClientId = getClientId;
 exports.getFolders = getFolders;
+exports.getLinks = getLinks;
 exports.getNotationResults = getNotationResults;
 exports.getSecretByTitle = getSecretByTitle;
 exports.getSecrets = getSecrets;
@@ -6752,8 +7118,11 @@ exports.initializeStorage = initializeStorage;
 exports.loadJsonConfig = loadJsonConfig;
 exports.localConfigStorage = localConfigStorage;
 exports.parseNotation = parseNotation;
+exports.parseThrottle = parseThrottle;
 exports.postFunction = postFunction;
 exports.setCustomProxyAgent = setCustomProxyAgent$1;
+exports.throttleDelay = throttleDelay;
+exports.throttleJitter = throttleJitter;
 exports.tryGetNotationResults = tryGetNotationResults;
 exports.updateFolder = updateFolder;
 exports.updateSecret = updateSecret;

@@ -10,9 +10,6 @@ const PROTECTED_FIELD_TYPES = new Set([
     'cardRef' // References to payment card records
 ])
 
-// Field types that require special validation
-const SENSITIVE_FIELD_TYPES = new Set(['password', 'oneTimeCode', 'securityQuestion', 'pinCode', 'privateKey', 'secret'])
-
 // Standard KSM field types that hold plain string values.
 // Structured types (Phone, Host, Name, Address, PaymentCard, BankAccount, KeyPair,
 // Schedule, Script, PamResource, PamHostname) are intentionally excluded: their

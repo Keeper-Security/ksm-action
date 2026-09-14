@@ -27,6 +27,10 @@ inputs:
     description: 'Allow storing empty values to fields'
     required: false
     default: 'false'
+  max-throttle-wait-seconds:
+    description: 'Maximum seconds to wait for a single Keeper backend throttle retry before failing fast instead of blocking. Raise this to allow the SDK''s full backoff schedule (up to ~176s per attempt) to run.'
+    required: false
+    default: '60'
 runs:
   using: 'node24'
   main: 'dist/index.js'

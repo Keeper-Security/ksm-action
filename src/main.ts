@@ -35,7 +35,8 @@ export enum KsmErrorType {
     RECORD_NOT_FOUND = 'RECORD_NOT_FOUND',
     FIELD_NOT_FOUND = 'FIELD_NOT_FOUND',
     NETWORK_ERROR = 'NETWORK_ERROR',
-    INVALID_CONFIG = 'INVALID_CONFIG'
+    INVALID_CONFIG = 'INVALID_CONFIG',
+    THROTTLE_EXCEEDED = 'THROTTLE_EXCEEDED'
 }
 
 export class KsmActionError extends Error {
@@ -50,6 +51,34 @@ export class KsmActionError extends Error {
         this.name = 'KsmActionError'
         this.retryable = (details as {retryable?: boolean})?.retryable === true
     }
+}
+
+// The SDK's own backend-throttle retry has no ceiling on the server-supplied wait (secrets-manager-core 17.5.0+).
+// Rejecting instead of sleeping past this cap turns a silent multi-minute hang (ending in a confusing
+// runner timeout) into an immediate, clear failure.
+export const buildThrottleSleep = (maxWaitMs: number): ((ms: number) => Promise<void>) => {
+    return async (ms: number): Promise<void> => {
+        if (ms > maxWaitMs) {
+            throw new KsmActionError(
+                KsmErrorType.THROTTLE_EXCEEDED,
+                `Keeper backend requested a ${(ms / 1000).toFixed(1)}s throttle wait, exceeding max-throttle-wait-seconds (${maxWaitMs / 1000}s)`
+            )
+        }
+        return new Promise(resolve => setTimeout(resolve, ms))
+    }
+}
+
+// Mirrors action.yml's own default so behavior is identical whether @actions/core applied the
+// YAML default (real runtime) or the input simply came back empty (e.g. in tests).
+const DEFAULT_MAX_THROTTLE_WAIT_SECONDS = 60
+
+const parseMaxThrottleWaitSeconds = (rawInput: string): number => {
+    if (!rawInput) return DEFAULT_MAX_THROTTLE_WAIT_SECONDS
+    const seconds = Number(rawInput)
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Invalid value for max-throttle-wait-seconds: '${rawInput}'. Must be a positive number.`)
+    }
+    return seconds
 }
 
 type SecretsInput = {
@@ -702,7 +731,11 @@ export class KsmAction {
             }
 
             const inputs = parseSecretsInputs(this.logger.getMultilineInput('secrets'))
-            const options = {storage: loadJsonConfig(config)}
+            const maxThrottleWaitSeconds = parseMaxThrottleWaitSeconds(this.logger.getInput('max-throttle-wait-seconds'))
+            const options = {
+                storage: loadJsonConfig(config),
+                throttleSleep: buildThrottleSleep(maxThrottleWaitSeconds * 1000)
+            }
 
             // Separate operations by type
             const retrieveOps = inputs.filter(i => i.operationType === OperationType.retrieve)

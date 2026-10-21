@@ -1,6 +1,6 @@
 {
   "name": "ksm-action",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "private": true,
   "description": "Keeper Secrets Manager GitHub Action",
   "main": "lib/main.js",
@@ -40,5 +40,10 @@
     "prettier": "3.9.6",
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "@istanbuljs/load-nyc-config@1.1.0": {
+      "js-yaml": "^4.3.2"
+    }
   }
 }

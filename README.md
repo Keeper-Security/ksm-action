@@ -10,6 +10,8 @@ Keeper’s GitHub Actions integration lets DevOps and engineering teams securely
 - Set secret credentials as build arguments or environment variables in Github Actions scripts
 - Copy secure files from the Keeper Vault
 
+File destinations must resolve inside `GITHUB_WORKSPACE` and must not be hard links. Create destination directories before running the action.
+
 ## Get Started
 
 - See our [official documentation page](https://docs.keeper.io/en/keeperpam/secrets-manager/integrations/github-actions) for GitHub Actions

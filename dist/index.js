@@ -299,13 +299,63 @@ class KsmAction {
         this.ksmOps = ksmOps;
         this.logger = logger;
     }
-    validateFilePath(filePath) {
-        const resolvedPath = path.resolve(filePath);
+    resolveWorkspacePath() {
         const workspaceDir = process.env.GITHUB_WORKSPACE || process.cwd();
-        if (!resolvedPath.startsWith(path.resolve(workspaceDir))) {
+        try {
+            const canonicalWorkspace = fs.realpathSync.native(workspaceDir);
+            if (!fs.statSync(canonicalWorkspace).isDirectory()) {
+                throw new Error('Workspace path is not a directory');
+            }
+            return canonicalWorkspace;
+        }
+        catch (error) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Workspace directory is not accessible: ${workspaceDir}`, { originalError: error });
+        }
+    }
+    validateFilePath(filePath, options = {}) {
+        var _a;
+        if (!filePath) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, 'File path must not be empty');
+        }
+        const resolvedPath = path.resolve(filePath);
+        const canonicalWorkspace = (_a = options.workspace) !== null && _a !== void 0 ? _a : this.resolveWorkspacePath();
+        let canonicalPath;
+        let targetExists;
+        try {
+            const target = fs.lstatSync(resolvedPath, { throwIfNoEntry: false });
+            targetExists = target !== undefined;
+            if (target) {
+                canonicalPath = fs.realpathSync.native(resolvedPath);
+            }
+            else {
+                const canonicalParent = fs.realpathSync.native(path.dirname(resolvedPath));
+                if (!fs.statSync(canonicalParent).isDirectory()) {
+                    throw new Error('Parent path is not a directory');
+                }
+                canonicalPath = path.join(canonicalParent, path.basename(resolvedPath));
+            }
+        }
+        catch (error) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Unable to resolve file path: ${filePath}`, { originalError: error });
+        }
+        const relativePath = path.relative(canonicalWorkspace, canonicalPath);
+        if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
             throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File path must be within the workspace directory: ${filePath}`);
         }
-        return resolvedPath;
+        let target;
+        try {
+            target = targetExists ? fs.statSync(canonicalPath) : undefined;
+        }
+        catch (error) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Unable to access file path: ${filePath}`, { originalError: error });
+        }
+        if (target && !target.isFile()) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File path must refer to a regular file: ${filePath}`);
+        }
+        if (options.destination && target && target.nlink > 1) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File destination must not be a hard link: ${filePath}`);
+        }
+        return canonicalPath;
     }
     resolveSourceValue(source) {
         // Handle different source prefixes
@@ -455,7 +505,7 @@ class KsmAction {
             this.logger.debug(`📖 Reading file: ${rawPath}`);
             const fileReadStart = Date.now();
             const fileData = fs.readFileSync(filePath);
-            const fileName = path.basename(filePath);
+            const fileName = path.basename(path.resolve(rawPath));
             this.logger.debug(`📖 File read completed in ${Date.now() - fileReadStart}ms (size: ${fileData.length} bytes)`);
             const fileUpload = {
                 name: fileName,
@@ -635,7 +685,9 @@ class KsmAction {
     }
     processRetrieveOperations(options, inputs, secrets) {
         return __awaiter(this, void 0, void 0, function* () {
+            const workspace = inputs.some(input => input.destinationType === DestinationType.file) ? this.resolveWorkspacePath() : undefined;
             for (const input of inputs) {
+                const filePath = input.destinationType === DestinationType.file ? this.validateFilePath(input.destination, { workspace, destination: true }) : input.destination;
                 this.logger.debug(`Retrieving secret value using notation [${input.notation}]`);
                 let secret;
                 try {
@@ -666,10 +718,10 @@ class KsmAction {
                     case DestinationType.file:
                         if (input.selector === 'file') {
                             const fileData = yield this.ksmOps.downloadFile(secret);
-                            fs.writeFileSync(input.destination, fileData);
+                            fs.writeFileSync(this.validateFilePath(filePath, { workspace, destination: true }), fileData);
                         }
                         else {
-                            fs.writeFileSync(input.destination, serialized);
+                            fs.writeFileSync(filePath, serialized);
                         }
                         break;
                 }

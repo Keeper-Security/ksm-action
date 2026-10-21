@@ -1,6 +1,7 @@
 import {expect, test, describe, beforeEach, afterEach, jest} from '@jest/globals'
 import {getRecordUids, parseSecretsInputs, KsmAction, KsmActionError, KsmErrorType, IKsmOperations, createRunner, serializeValue} from '../src/main'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 
 // Mock implementations
@@ -521,12 +522,22 @@ describe('Security: Secret Masking for Store Operations', () => {
     })
 })
 
-describe('Security: File Path Traversal Prevention', () => {
+describe('File source validation', () => {
     let mockOps: MockKsmOperations
     let mockLogger: any
     let action: KsmAction
+    let tempDir: string
+    let outsideFile: string
+    let originalWorkspace: string | undefined
 
     beforeEach(() => {
+        originalWorkspace = process.env.GITHUB_WORKSPACE
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ksm-action-source-'))
+        const workspace = path.join(tempDir, 'workspace')
+        fs.mkdirSync(workspace)
+        outsideFile = path.join(tempDir, 'outside.txt')
+        fs.writeFileSync(outsideFile, 'synthetic-source')
+        process.env.GITHUB_WORKSPACE = workspace
         mockOps = new MockKsmOperations()
         mockLogger = {
             info: jest.fn(),
@@ -544,6 +555,15 @@ describe('Security: File Path Traversal Prevention', () => {
         action = new KsmAction(mockOps, mockLogger)
     })
 
+    afterEach(() => {
+        if (originalWorkspace === undefined) {
+            delete process.env.GITHUB_WORKSPACE
+        } else {
+            process.env.GITHUB_WORKSPACE = originalWorkspace
+        }
+        fs.rmSync(tempDir, {recursive: true, force: true})
+    })
+
     test('Rejects file: source outside workspace', async () => {
         const record = {
             recordUid: 'TestUID',
@@ -557,7 +577,7 @@ describe('Security: File Path Traversal Prevention', () => {
             uid: 'TestUID',
             selector: 'field',
             notation: 'TestUID/field/notes',
-            destination: 'file:/etc/passwd',
+            destination: `file:${outsideFile}`,
             operationType: 1,
             destinationType: 3
         }
@@ -586,7 +606,7 @@ describe('Security: File Path Traversal Prevention', () => {
             uid: 'TestUID',
             selector: 'field',
             notation: 'TestUID/field/notes',
-            destination: 'file:../../../../../../etc/shadow',
+            destination: `file:${path.relative(process.cwd(), outsideFile)}`,
             operationType: 1,
             destinationType: 3
         }
@@ -615,7 +635,7 @@ describe('Security: File Path Traversal Prevention', () => {
             uid: 'TestUID',
             selector: 'file',
             notation: 'TestUID/file',
-            destination: 'file:/etc/hosts',
+            destination: `file:${outsideFile}`,
             operationType: 1,
             destinationType: 3
         }

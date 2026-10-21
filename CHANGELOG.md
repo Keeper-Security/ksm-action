@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3] - 2026-10-21
+
+### Security
+- Resolved all 10 open Dependabot alerts (8 distinct advisories), plus 6 auto-dismissed
+  high-severity `brace-expansion` alerts (2 additional advisories):
+  - `undici` 6.28.0 -> 6.29.1, fixing alerts #73, #74, and #83, plus the newer upstream
+    TLS, content-encoding, EventSource, and WebSocket security fixes in 6.29.1.
+  - `handlebars` 4.7.9 -> 4.7.10, fixing alerts #80, #81, and #88.
+  - All 9 installed `brace-expansion` copies updated within their existing major versions:
+    1.1.18 -> 1.1.21, 2.1.4 -> 2.1.7, and 5.0.9 -> 5.0.12. These fix open alerts
+    #77, #82, and #87, plus auto-dismissed alerts #75, #76, #78, #84, #85, and #86.
+  - Removed `sprintf-js` from the dependency graph, fixing alert #79. No patched version is
+    published. A scoped override makes `@istanbuljs/load-nyc-config@1.1.0` use `js-yaml`
+    4.3.2 instead of 3.15.2, removing its legacy `argparse` 1.x and `sprintf-js` chain.
+- Rebuilt `dist/` so the shipped action includes the patched `undici`. The other affected
+  packages are development-only and are not included in the action bundle.
+
+### Added
+- Regression tests for the coverage configuration loader's YAML options, scalar-to-array
+  normalization, and relative YAML inheritance with the scoped override.
+- A lockfile regression test rejects `sprintf-js` at every dependency location.
+
+### Changed
+- Bumped the package version to 1.3.3. Action source, inputs, the Keeper SDK version, and the
+  Node 24 runtime are unchanged.
+
+### Verification
+- `npm ci` and `npm run all` pass: 131 tests across 5 suites, a clean TypeScript build, and
+  no lint or formatting errors. The Babel coverage run also passes all 131 tests.
+- `npm audit` and `npm audit --omit=dev` report 0 vulnerabilities.
+- The generated bundle passes syntax and import smoke checks; a clean reinstall and rebuild
+  produces byte-identical `dist/` files.
+
 ## [1.3.2] - 2026-09-10
 
 ### Added

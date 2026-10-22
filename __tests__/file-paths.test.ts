@@ -1,6 +1,7 @@
 import {afterEach, beforeEach, describe, expect, jest, test} from '@jest/globals'
 import * as core from '@actions/core'
 import {KeeperFile, KeeperRecord, KeeperSecrets, loadJsonConfig, SecretManagerOptions} from '@keeper-security/secrets-manager-core'
+import {execFileSync} from 'child_process'
 import {randomUUID} from 'crypto'
 import fs from 'fs'
 import os from 'os'
@@ -73,6 +74,8 @@ function supportsLinks(kind: 'directory' | 'file' | 'hard'): boolean {
 const directoryLinkTest = supportsLinks('directory') ? test : test.skip
 const fileLinkTest = supportsLinks('file') ? test : test.skip
 const hardLinkTest = supportsLinks('hard') ? test : test.skip
+const noFollowTest = fs.constants.O_NOFOLLOW === undefined ? test.skip : fileLinkTest
+const fifoTest = process.platform === 'win32' ? test.skip : test
 const retrieveKinds: RetrieveKind[] = ['field', 'attachment']
 
 function createLogger() {
@@ -393,6 +396,13 @@ describe('File paths', () => {
             await expectRejectedDestination(workspace, kind, 'regular file')
         })
 
+        fifoTest.each(retrieveKinds)('rejects existing FIFO destinations before %s resolution', async kind => {
+            const destination = path.join(nested, 'fixture.fifo')
+            execFileSync('mkfifo', [destination])
+            await expectRejectedDestination(destination, kind, 'regular file')
+            expect(fs.statSync(destination).isFIFO()).toBe(true)
+        })
+
         test.each(retrieveKinds)('rejects missing workspace directories before %s resolution', async kind => {
             process.env.GITHUB_WORKSPACE = path.join(owned.root, 'missing-workspace')
             await expectRejectedDestination(path.join(nested, 'value.txt'), kind, 'Workspace directory is not accessible')
@@ -553,9 +563,11 @@ describe('File paths', () => {
             const alias = path.join(workspace, 'parent-alias')
             linkDirectory(nested, alias)
             const canonicalDestination = path.join(fs.realpathSync.native(nested), 'value.txt')
+            const open = jest.spyOn(fs, 'openSync')
             const write = jest.spyOn(fs, 'writeFileSync')
             await retrieve(path.join(alias, 'value.txt'), kind)
-            expect(write).toHaveBeenCalledWith(canonicalDestination, kind === 'attachment' ? BINARY : TEXT)
+            expect(open).toHaveBeenCalledWith(canonicalDestination, expect.any(Number))
+            expect(write).toHaveBeenCalledWith(open.mock.results[0].value as number, kind === 'attachment' ? BINARY : TEXT)
             expect(fs.readFileSync(canonicalDestination)).toEqual(Buffer.from(kind === 'attachment' ? BINARY : TEXT))
         })
 
@@ -580,9 +592,11 @@ describe('File paths', () => {
             const alias = path.join(workspace, 'alias.txt')
             fs.writeFileSync(target, ORIGINAL)
             linkFile(target, alias)
+            const open = jest.spyOn(fs, 'openSync')
             const write = jest.spyOn(fs, 'writeFileSync')
             await retrieve(alias, kind)
-            expect(write).toHaveBeenCalledWith(fs.realpathSync.native(target), kind === 'attachment' ? BINARY : TEXT)
+            expect(open).toHaveBeenCalledWith(fs.realpathSync.native(target), expect.any(Number))
+            expect(write).toHaveBeenCalledWith(open.mock.results[0].value as number, kind === 'attachment' ? BINARY : TEXT)
             expect(fs.readFileSync(target)).toEqual(Buffer.from(kind === 'attachment' ? BINARY : TEXT))
             expect(fs.lstatSync(alias).isSymbolicLink()).toBe(true)
         })
@@ -608,6 +622,318 @@ describe('File paths', () => {
             fs.linkSync(outsideFile, destination)
             await expectRejectedDestination(destination, kind, 'File destination must not be a hard link')
             expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+        })
+    })
+
+    describe('File descriptor writes', () => {
+        test.each(retrieveKinds)('checks and writes the same descriptor without early truncation for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL.repeat(8))
+            const open = jest.spyOn(fs, 'openSync')
+            const stat = jest.spyOn(fs, 'fstatSync')
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await retrieve(destination, kind)
+            const descriptor = open.mock.results[0].value as number
+            const flags = open.mock.calls[0][1] as number
+            expect(open).toHaveBeenCalledWith(fs.realpathSync.native(destination), expect.any(Number))
+            expect(flags & fs.constants.O_WRONLY).toBe(fs.constants.O_WRONLY)
+            expect(flags & fs.constants.O_CREAT).toBe(fs.constants.O_CREAT)
+            expect(flags & fs.constants.O_TRUNC).toBe(0)
+            for (const optionalFlag of [fs.constants.O_NOFOLLOW, fs.constants.O_NONBLOCK]) {
+                if (optionalFlag !== undefined) {
+                    expect(flags & optionalFlag).toBe(optionalFlag)
+                }
+            }
+            expect(stat).toHaveBeenCalledWith(descriptor)
+            expect(truncate).toHaveBeenCalledWith(descriptor)
+            expect(write).toHaveBeenCalledWith(descriptor, kind === 'attachment' ? BINARY : TEXT)
+            expect(close).toHaveBeenCalledWith(descriptor)
+            expect(stat.mock.invocationCallOrder[0]).toBeLessThan(truncate.mock.invocationCallOrder[0])
+            expect(truncate.mock.invocationCallOrder[0]).toBeLessThan(write.mock.invocationCallOrder[0])
+            expect(write.mock.invocationCallOrder[0]).toBeLessThan(close.mock.invocationCallOrder[0])
+            expect(fs.readFileSync(destination)).toEqual(Buffer.from(kind === 'attachment' ? BINARY : TEXT))
+            expect(() => fs.fstatSync(descriptor)).toThrow()
+        })
+
+        hardLinkTest.each(retrieveKinds)('preserves a hard-linked target substituted during open for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const canonicalDestination = fs.realpathSync.native(destination)
+            const realOpen = fs.openSync
+            const open = jest.spyOn(fs, 'openSync').mockImplementation((...args) => {
+                if (args[0] === canonicalDestination) {
+                    fs.unlinkSync(destination)
+                    fs.linkSync(outsideFile, destination)
+                }
+                return realOpen(...args)
+            })
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('File destination must not be a hard link')
+            })
+            expect(truncate).not.toHaveBeenCalled()
+            expect(write).not.toHaveBeenCalled()
+            expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+            expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+            originalFilesAreUnchanged()
+        })
+
+        noFollowTest.each(retrieveKinds)('rejects final-component aliases substituted during open for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const canonicalDestination = fs.realpathSync.native(destination)
+            const realOpen = fs.openSync
+            jest.spyOn(fs, 'openSync').mockImplementation((...args) => {
+                if (args[0] === canonicalDestination) {
+                    fs.unlinkSync(destination)
+                    linkFile(outsideFile, destination)
+                }
+                return realOpen(...args)
+            })
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('Unable to open file destination')
+            })
+            expect(truncate).not.toHaveBeenCalled()
+            expect(write).not.toHaveBeenCalled()
+            expect(close).not.toHaveBeenCalled()
+            originalFilesAreUnchanged()
+        })
+
+        fifoTest.each(retrieveKinds)('rejects FIFO descriptors substituted during open for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            const fifo = path.join(nested, 'fixture.fifo')
+            fs.writeFileSync(destination, ORIGINAL)
+            execFileSync('mkfifo', [fifo])
+            const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK)
+            const canonicalDestination = fs.realpathSync.native(destination)
+            const realOpen = fs.openSync
+            const open = jest.spyOn(fs, 'openSync').mockImplementation((...args) => {
+                if (args[0] === canonicalDestination) {
+                    fs.unlinkSync(destination)
+                    fs.renameSync(fifo, destination)
+                }
+                return realOpen(...args)
+            })
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            try {
+                await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                    type: KsmErrorType.INVALID_CONFIG,
+                    message: expect.stringContaining('regular file')
+                })
+                expect(truncate).not.toHaveBeenCalled()
+                expect(write).not.toHaveBeenCalled()
+                expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+                expect(fs.statSync(destination).isFIFO()).toBe(true)
+                expect(fs.fstatSync(reader).isFIFO()).toBe(true)
+            } finally {
+                fs.closeSync(reader)
+            }
+        })
+
+        test.each(retrieveKinds.flatMap(kind => [0, 2].map(nlink => ({kind, nlink}))))(
+            'rejects descriptor link count $nlink without truncating for $kind retrieval',
+            async ({kind, nlink}) => {
+                const destination = path.join(nested, 'existing.txt')
+                fs.writeFileSync(destination, ORIGINAL)
+                const target = fs.statSync(destination)
+                const open = jest.spyOn(fs, 'openSync')
+                jest.spyOn(fs, 'fstatSync').mockReturnValue({...target, nlink, isFile: () => true} as fs.Stats)
+                const truncate = jest.spyOn(fs, 'ftruncateSync')
+                const write = jest.spyOn(fs, 'writeFileSync')
+                const close = jest.spyOn(fs, 'closeSync')
+                await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                    type: KsmErrorType.INVALID_CONFIG,
+                    message: expect.stringContaining('File destination must not be a hard link')
+                })
+                expect(truncate).not.toHaveBeenCalled()
+                expect(write).not.toHaveBeenCalled()
+                expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+                expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+            }
+        )
+
+        test.each(retrieveKinds)('rejects nonregular descriptor types without truncating for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const target = fs.statSync(destination)
+            const open = jest.spyOn(fs, 'openSync')
+            jest.spyOn(fs, 'fstatSync').mockReturnValue({...target, isFile: () => false} as fs.Stats)
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('regular file')
+            })
+            expect(truncate).not.toHaveBeenCalled()
+            expect(write).not.toHaveBeenCalled()
+            expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+            expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+        })
+
+        test.each(retrieveKinds)('reports open failures without closing an unopened descriptor for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const failure = Object.assign(new Error('Synthetic open failure'), {code: 'EACCES'})
+            jest.spyOn(fs, 'openSync').mockImplementation(() => {
+                throw failure
+            })
+            const stat = jest.spyOn(fs, 'fstatSync')
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('Unable to open file destination'),
+                details: {originalError: failure}
+            })
+            expect(stat).not.toHaveBeenCalled()
+            expect(truncate).not.toHaveBeenCalled()
+            expect(write).not.toHaveBeenCalled()
+            expect(close).not.toHaveBeenCalled()
+            expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+        })
+
+        test.each(retrieveKinds)('closes the descriptor when its stat fails for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const failure = new Error('Synthetic descriptor stat failure')
+            const open = jest.spyOn(fs, 'openSync')
+            jest.spyOn(fs, 'fstatSync').mockImplementation(() => {
+                throw failure
+            })
+            const truncate = jest.spyOn(fs, 'ftruncateSync')
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('Unable to access file destination'),
+                details: {originalError: failure}
+            })
+            expect(truncate).not.toHaveBeenCalled()
+            expect(write).not.toHaveBeenCalled()
+            expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+            expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+        })
+
+        test.each(retrieveKinds)('closes the descriptor when truncation fails for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const failure = new Error('Synthetic truncate failure')
+            const open = jest.spyOn(fs, 'openSync')
+            jest.spyOn(fs, 'ftruncateSync').mockImplementation(() => {
+                throw failure
+            })
+            const write = jest.spyOn(fs, 'writeFileSync')
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toBe(failure)
+            expect(write).not.toHaveBeenCalled()
+            expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+            expect(fs.readFileSync(destination, 'utf8')).toBe(ORIGINAL)
+        })
+
+        test.each(retrieveKinds)('closes the descriptor when writing fails for %s retrieval', async kind => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const failure = new Error('Synthetic write failure')
+            const open = jest.spyOn(fs, 'openSync')
+            jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+                throw failure
+            })
+            const close = jest.spyOn(fs, 'closeSync')
+            await expect(retrieve(destination, kind)).rejects.toBe(failure)
+            expect(close).toHaveBeenCalledWith(open.mock.results[0].value as number)
+            expect(fs.statSync(destination).size).toBe(0)
+        })
+
+        test('checks, writes, and closes descriptor zero', async () => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            const target = fs.statSync(destination)
+            jest.spyOn(fs, 'openSync').mockReturnValue(0)
+            const stat = jest.spyOn(fs, 'fstatSync').mockReturnValue(target)
+            const truncate = jest.spyOn(fs, 'ftruncateSync').mockImplementation(() => undefined)
+            const write = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined)
+            const close = jest.spyOn(fs, 'closeSync').mockImplementation(() => undefined)
+            await retrieve(destination, 'field')
+            expect(stat).toHaveBeenCalledWith(0)
+            expect(truncate).toHaveBeenCalledWith(0)
+            expect(write).toHaveBeenCalledWith(0, TEXT)
+            expect(close).toHaveBeenCalledWith(0)
+        })
+
+        fileLinkTest('revalidates a field destination changed during value resolution before opening it', async () => {
+            const destination = path.join(nested, 'existing.txt')
+            fs.writeFileSync(destination, ORIGINAL)
+            operations.getValue.mockImplementation(() => {
+                fs.unlinkSync(destination)
+                linkFile(outsideFile, destination)
+                return TEXT
+            })
+            const open = jest.spyOn(fs, 'openSync')
+            await expect(action.processRetrieveOperations(options, [retrieveInput(destination, 'field')], secrets)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('workspace directory')
+            })
+            expect(open).not.toHaveBeenCalled()
+            originalFilesAreUnchanged()
+        })
+
+        fileLinkTest.each(retrieveKinds)('preserves contained aliases and rejects escaping aliases without optional POSIX flags for %s retrieval', async kind => {
+            const target = path.join(nested, 'target.txt')
+            const insideAlias = path.join(workspace, 'inside.txt')
+            const outsideAlias = path.join(workspace, 'outside.txt')
+            fs.writeFileSync(target, ORIGINAL)
+            linkFile(target, insideAlias)
+            linkFile(outsideFile, outsideAlias)
+            const open = jest.fn<typeof fs.openSync>(fs.openSync)
+            jest.doMock('fs', () => ({...fs, constants: {...fs.constants, O_NOFOLLOW: undefined, O_NONBLOCK: undefined}, openSync: open}))
+            try {
+                await jest.isolateModulesAsync(async () => {
+                    const {KsmAction: ActionWithoutOptionalFlags} = await import('../src/main')
+                    const isolatedAction = new ActionWithoutOptionalFlags(operations, logger as unknown as typeof core)
+                    prepareValue(kind)
+                    await isolatedAction.processRetrieveOperations(options, [retrieveInput(insideAlias, kind)], secrets)
+                    expect(open).toHaveBeenCalledWith(fs.realpathSync.native(target), fs.constants.O_WRONLY | fs.constants.O_CREAT)
+                    expect(fs.readFileSync(target)).toEqual(Buffer.from(kind === 'attachment' ? BINARY : TEXT))
+                    expect(fs.lstatSync(insideAlias).isSymbolicLink()).toBe(true)
+                    operations.getValue.mockClear()
+                    operations.downloadFile.mockClear()
+                    open.mockClear()
+                    await expect(isolatedAction.processRetrieveOperations(options, [retrieveInput(outsideAlias, kind)], secrets)).rejects.toMatchObject({
+                        type: KsmErrorType.INVALID_CONFIG,
+                        message: expect.stringContaining('workspace directory')
+                    })
+                    expect(open).not.toHaveBeenCalled()
+                    expect(operations.getValue).not.toHaveBeenCalled()
+                    expect(operations.downloadFile).not.toHaveBeenCalled()
+                    originalFilesAreUnchanged()
+                    operations.getValue.mockImplementation(() => {
+                        fs.unlinkSync(target)
+                        linkFile(outsideFile, target)
+                        return kind === 'attachment' ? attachment : TEXT
+                    })
+                    await expect(isolatedAction.processRetrieveOperations(options, [retrieveInput(insideAlias, kind)], secrets)).rejects.toMatchObject({
+                        type: KsmErrorType.INVALID_CONFIG,
+                        message: expect.stringContaining('workspace directory')
+                    })
+                    expect(open).not.toHaveBeenCalled()
+                    originalFilesAreUnchanged()
+                })
+            } finally {
+                jest.dontMock('fs')
+            }
         })
     })
 

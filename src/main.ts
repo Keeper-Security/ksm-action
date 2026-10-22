@@ -362,6 +362,36 @@ export class KsmAction {
         return canonicalPath
     }
 
+    private writeFileDestination(filePath: string, data: string | Uint8Array, workspace?: string): void {
+        const canonicalPath = this.validateFilePath(filePath, {workspace, destination: true})
+        const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0)
+        let descriptor: number
+        try {
+            descriptor = fs.openSync(canonicalPath, flags)
+        } catch (error) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Unable to open file destination: ${filePath}`, {originalError: error})
+        }
+
+        try {
+            let target: fs.Stats
+            try {
+                target = fs.fstatSync(descriptor)
+            } catch (error) {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Unable to access file destination: ${filePath}`, {originalError: error})
+            }
+            if (!target.isFile()) {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File path must refer to a regular file: ${filePath}`)
+            }
+            if (target.nlink !== 1) {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File destination must not be a hard link: ${filePath}`)
+            }
+            fs.ftruncateSync(descriptor)
+            fs.writeFileSync(descriptor, data)
+        } finally {
+            fs.closeSync(descriptor)
+        }
+    }
+
     private resolveSourceValue(source: string): string {
         // Handle different source prefixes
         if (source.startsWith('env:')) {
@@ -766,9 +796,9 @@ export class KsmAction {
                 case DestinationType.file:
                     if (input.selector === 'file') {
                         const fileData = await this.ksmOps.downloadFile(secret as KeeperFile)
-                        fs.writeFileSync(this.validateFilePath(filePath, {workspace, destination: true}), fileData)
+                        this.writeFileDestination(filePath, fileData, workspace)
                     } else {
-                        fs.writeFileSync(filePath, serialized)
+                        this.writeFileDestination(filePath, serialized, workspace)
                     }
                     break
             }

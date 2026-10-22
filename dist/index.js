@@ -357,6 +357,38 @@ class KsmAction {
         }
         return canonicalPath;
     }
+    writeFileDestination(filePath, data, workspace) {
+        var _a, _b;
+        const canonicalPath = this.validateFilePath(filePath, { workspace, destination: true });
+        const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | ((_a = fs.constants.O_NOFOLLOW) !== null && _a !== void 0 ? _a : 0) | ((_b = fs.constants.O_NONBLOCK) !== null && _b !== void 0 ? _b : 0);
+        let descriptor;
+        try {
+            descriptor = fs.openSync(canonicalPath, flags);
+        }
+        catch (error) {
+            throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Unable to open file destination: ${filePath}`, { originalError: error });
+        }
+        try {
+            let target;
+            try {
+                target = fs.fstatSync(descriptor);
+            }
+            catch (error) {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `Unable to access file destination: ${filePath}`, { originalError: error });
+            }
+            if (!target.isFile()) {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File path must refer to a regular file: ${filePath}`);
+            }
+            if (target.nlink !== 1) {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, `File destination must not be a hard link: ${filePath}`);
+            }
+            fs.ftruncateSync(descriptor);
+            fs.writeFileSync(descriptor, data);
+        }
+        finally {
+            fs.closeSync(descriptor);
+        }
+    }
     resolveSourceValue(source) {
         // Handle different source prefixes
         if (source.startsWith('env:')) {
@@ -722,10 +754,10 @@ class KsmAction {
                     case DestinationType.file:
                         if (input.selector === 'file') {
                             const fileData = yield this.ksmOps.downloadFile(secret);
-                            fs.writeFileSync(this.validateFilePath(filePath, { workspace, destination: true }), fileData);
+                            this.writeFileDestination(filePath, fileData, workspace);
                         }
                         else {
-                            fs.writeFileSync(filePath, serialized);
+                            this.writeFileDestination(filePath, serialized, workspace);
                         }
                         break;
                 }

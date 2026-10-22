@@ -430,6 +430,108 @@ describe('File paths', () => {
         })
     })
 
+    describe('File destination preflight', () => {
+        const precedingDestinations = [
+            {name: 'output', kind: 'field' as const, prefix: '', destination: 'QA_OUTPUT'},
+            {name: 'environment', kind: 'field' as const, prefix: 'env:', destination: 'QA_VALUE'},
+            {name: 'field file', kind: 'field' as const, prefix: 'file:', destination: 'existing.txt'},
+            {name: 'attachment file', kind: 'attachment' as const, prefix: 'file:', destination: 'existing.bin'}
+        ]
+
+        test.each(precedingDestinations.flatMap(first => retrieveKinds.map(kind => ({first, kind}))))(
+            'rejects a later $kind file destination before publishing an earlier $first.name',
+            async ({first, kind}) => {
+                const existing = path.join(nested, first.destination)
+                fs.writeFileSync(existing, ORIGINAL)
+                const firstDestination = first.prefix === 'file:' ? existing : first.destination
+                const inputs = parseSecretsInputs([`${notationFor(first.kind)} > ${first.prefix}${firstDestination}`, `${notationFor(kind)} > file:${outsideFile}`])
+                const open = jest.spyOn(fs, 'openSync')
+                await expect(action.processRetrieveOperations(options, inputs, secrets)).rejects.toMatchObject({
+                    type: KsmErrorType.INVALID_CONFIG,
+                    message: expect.stringContaining('workspace directory')
+                })
+                expect(operations.getValue).not.toHaveBeenCalled()
+                expect(operations.downloadFile).not.toHaveBeenCalled()
+                expect(logger.setSecret).not.toHaveBeenCalled()
+                expect(logger.setOutput).not.toHaveBeenCalled()
+                expect(logger.exportVariable).not.toHaveBeenCalled()
+                expect(open).not.toHaveBeenCalled()
+                expect(fs.readFileSync(existing, 'utf8')).toBe(ORIGINAL)
+                originalFilesAreUnchanged()
+            }
+        )
+
+        test.each(['', 'env:'])('preflights implicit attachment-file destinations with prefix "%s"', async prefix => {
+            const inputs = parseSecretsInputs([`${notationFor('field')} > QA_OUTPUT`, `${notationFor('attachment')} > ${prefix}${outsideFile}`])
+            await expect(action.processRetrieveOperations(options, inputs, secrets)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('workspace directory')
+            })
+            expect(operations.getValue).not.toHaveBeenCalled()
+            expect(operations.downloadFile).not.toHaveBeenCalled()
+            expect(logger.setOutput).not.toHaveBeenCalled()
+            originalFilesAreUnchanged()
+        })
+
+        test('keeps the preflight workspace when an earlier environment export changes it', async () => {
+            const destination = path.join(nested, 'value.txt')
+            const inputs = parseSecretsInputs([`${notationFor('field')} > env:GITHUB_WORKSPACE`, `${notationFor('field')} > file:${destination}`])
+            logger.exportVariable.mockImplementation(() => {
+                process.env.GITHUB_WORKSPACE = outside
+            })
+            await action.processRetrieveOperations(options, inputs, secrets)
+            expect(logger.exportVariable).toHaveBeenCalledTimes(1)
+            expect(fs.readFileSync(destination, 'utf8')).toBe(TEXT)
+            originalFilesAreUnchanged()
+        })
+
+        test('keeps later relative destinations when an earlier output changes the current directory', async () => {
+            process.chdir(workspace)
+            const inputs = parseSecretsInputs([`${notationFor('field')} > QA_OUTPUT`, `${notationFor('field')} > file:nested/value.txt`])
+            logger.setOutput.mockImplementation(() => {
+                process.chdir(outside)
+            })
+            await action.processRetrieveOperations(options, inputs, secrets)
+            expect(logger.setOutput).toHaveBeenCalledTimes(1)
+            expect(fs.readFileSync(path.join(nested, 'value.txt'), 'utf8')).toBe(TEXT)
+            expect(fs.existsSync(path.join(outside, 'nested', 'value.txt'))).toBe(false)
+        })
+
+        test('keeps later relative destinations when an earlier attachment download changes the current directory', async () => {
+            process.chdir(workspace)
+            const inputs = parseSecretsInputs([`${notationFor('attachment')} > file:first.bin`, `${notationFor('field')} > file:nested/value.txt`])
+            operations.getValue.mockReturnValueOnce(attachment).mockReturnValueOnce(TEXT)
+            operations.downloadFile.mockImplementation(async () => {
+                process.chdir(outside)
+                return BINARY
+            })
+            await action.processRetrieveOperations(options, inputs, secrets)
+            expect(fs.readFileSync(path.join(workspace, 'first.bin'))).toEqual(Buffer.from(BINARY))
+            expect(fs.readFileSync(path.join(nested, 'value.txt'), 'utf8')).toBe(TEXT)
+            expect(fs.existsSync(path.join(outside, 'first.bin'))).toBe(false)
+            expect(fs.existsSync(path.join(outside, 'nested', 'value.txt'))).toBe(false)
+        })
+
+        fileLinkTest('revalidates later destinations after an earlier attachment download without rolling back completed files', async () => {
+            const first = path.join(workspace, 'first.bin')
+            const later = path.join(nested, 'later.txt')
+            const inputs = parseSecretsInputs([`${notationFor('attachment')} > file:${first}`, `${notationFor('field')} > file:${later}`])
+            prepareValue('attachment')
+            operations.downloadFile.mockImplementation(async () => {
+                linkFile(outsideFile, later)
+                return BINARY
+            })
+            await expect(action.processRetrieveOperations(options, inputs, secrets)).rejects.toMatchObject({
+                type: KsmErrorType.INVALID_CONFIG,
+                message: expect.stringContaining('workspace directory')
+            })
+            expect(operations.getValue).toHaveBeenCalledTimes(1)
+            expect(operations.downloadFile).toHaveBeenCalledTimes(1)
+            expect(fs.readFileSync(first)).toEqual(Buffer.from(BINARY))
+            originalFilesAreUnchanged()
+        })
+    })
+
     describe('Directory aliases', () => {
         directoryLinkTest.each(retrieveKinds)('accepts workspace aliases for %s retrieval', async kind => {
             const alias = path.join(owned.root, 'workspace-alias')

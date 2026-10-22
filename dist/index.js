@@ -686,8 +686,12 @@ class KsmAction {
     processRetrieveOperations(options, inputs, secrets) {
         return __awaiter(this, void 0, void 0, function* () {
             const workspace = inputs.some(input => input.destinationType === DestinationType.file) ? this.resolveWorkspacePath() : undefined;
-            for (const input of inputs) {
-                const filePath = input.destinationType === DestinationType.file ? this.validateFilePath(input.destination, { workspace, destination: true }) : input.destination;
+            const resolvedInputs = inputs.map(input => ({
+                input,
+                destination: input.destinationType === DestinationType.file ? this.validateFilePath(input.destination, { workspace, destination: true }) : input.destination
+            }));
+            for (const { input, destination } of resolvedInputs) {
+                const filePath = input.destinationType === DestinationType.file ? this.validateFilePath(destination, { workspace, destination: true }) : destination;
                 this.logger.debug(`Retrieving secret value using notation [${input.notation}]`);
                 let secret;
                 try {

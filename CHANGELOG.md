@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3]
+
+### Security
+- Updated the bundled `undici` to 6.29.1 for upstream security fixes.
+
+### Changed
+- Other dependency updates are development-only and do not change the shipped action.
+
 ## [1.3.2] - 2026-09-10
 
 ### Added

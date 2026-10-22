@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [1.3.3] - 2026-10-21
 
 ### Fixed
-- Validate retrieved field and attachment file destinations within `GITHUB_WORKSPACE`.
+- Reject file destinations outside `GITHUB_WORKSPACE` and hard-linked destinations.
 
 ### Changed
 - Update runtime and development dependencies and rebuild the bundled action.
+- Update bundled `undici` to 6.29.1.
 
 ### Added
 - Regression tests for dependency configuration and file destinations.

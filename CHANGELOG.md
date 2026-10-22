@@ -2,14 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.3.3] - 2026-10-21
+## [1.3.3]
 
-### Added
-- Coverage configuration compatibility tests.
+### Security
+- Updated the bundled `undici` to 6.29.1 for upstream security fixes.
 
 ### Changed
-- Updated `undici`, `handlebars`, `brace-expansion`, and coverage configuration dependencies.
-- Rebuilt the action bundle.
+- Other dependency updates are development-only and do not change the shipped action.
 
 ## [1.3.2] - 2026-09-10
 

@@ -26,7 +26,7 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^2.0.3",
-    "@keeper-security/secrets-manager-core": "17.5.0"
+    "@keeper-security/secrets-manager-core": "17.6.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

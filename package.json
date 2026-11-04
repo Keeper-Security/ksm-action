@@ -1,6 +1,6 @@
 {
   "name": "ksm-action",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "Keeper Secrets Manager GitHub Action",
   "main": "lib/main.js",
@@ -9,7 +9,7 @@
     "format": "prettier --write **/*.ts",
     "format-check": "prettier --check **/*.ts",
     "lint": "eslint src/**/*.ts",
-    "package": "ncc build --source-map --license licenses.txt",
+    "package": "ksm-ncc build --source-map --license licenses.txt",
     "test": "jest",
     "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
   },
@@ -26,22 +26,28 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^2.0.3",
-    "@keeper-security/secrets-manager-core": "17.5.0"
+    "@keeper-security/secrets-manager-core": "17.6.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@keeper-security/ncc-source": "file:tools/ncc-source",
+    "@types/node": "^26.6.6",
     "@typescript-eslint/parser": "^8.68.0",
-    "@vercel/ncc": "^0.38.4",
+    "deepmerge": "file:tools/dependency-compat/deepmerge",
     "eslint": "^8.57.0",
     "eslint-plugin-github": "^6.1.2",
-    "eslint-plugin-jest": "^29.16.5",
+    "eslint-plugin-jest": "^29.17.0",
     "globals": "^17.7.0",
     "jest": "^30.5.0",
+    "minimatch": "file:tools/dependency-compat/minimatch",
     "prettier": "3.9.6",
-    "ts-jest": "^29.4.6",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.9.3"
   },
   "overrides": {
+    "minimatch": "$minimatch",
+    "deepmerge": "$deepmerge",
+    "glob@>=9": "14.0.3",
+    "eslint-plugin-escompat": "3.11.3",
     "@istanbuljs/load-nyc-config@1.1.0": {
       "js-yaml": "^4.3.2"
     }

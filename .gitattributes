@@ -1,1 +1,3 @@
 dist/index.js.map -diff linguist-generated=true
+tools/ncc-source/src/** text eol=lf
+tools/ncc-source/LICENSE text eol=lf

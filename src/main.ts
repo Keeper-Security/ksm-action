@@ -53,9 +53,8 @@ export class KsmActionError extends Error {
     }
 }
 
-// The SDK's own backend-throttle retry has no ceiling on the server-supplied wait (secrets-manager-core 17.5.0+).
-// Rejecting instead of sleeping past this cap turns a silent multi-minute hang (ending in a confusing
-// runner timeout) into an immediate, clear failure.
+// secrets-manager-core 17.6.0 caps a server-supplied throttle wait at 176 seconds, plus up to 25% jitter.
+// The action's own cap still fails fast instead of blocking for that long.
 export const buildThrottleSleep = (maxWaitMs: number): ((ms: number) => Promise<void>) => {
     return async (ms: number): Promise<void> => {
         if (ms > maxWaitMs) {
@@ -101,6 +100,10 @@ export interface IKsmOperations {
     getValue(secrets: KeeperSecrets, notation: string): any
 }
 
+// The SDK applies a fixed 30 second limit to each request, including the whole request or response body.
+// File downloads and uploads get a longer limit. Keeper API calls keep the SDK default.
+const FILE_TRANSFER_TIMEOUT_MS = 300000
+
 // Production implementation
 export class KsmOperations implements IKsmOperations {
     async getSecrets(options: SecretManagerOptions, filter?: string[]): Promise<KeeperSecrets> {
@@ -116,11 +119,11 @@ export class KsmOperations implements IKsmOperations {
     }
 
     async uploadFile(options: SecretManagerOptions, record: KeeperRecord, file: KeeperFileUpload): Promise<string> {
-        return uploadFile(options, record, file)
+        return uploadFile(options, record, file, FILE_TRANSFER_TIMEOUT_MS)
     }
 
     async downloadFile(file: KeeperFile): Promise<Uint8Array> {
-        return downloadFile(file)
+        return downloadFile(file, FILE_TRANSFER_TIMEOUT_MS)
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,25 +146,25 @@ export function serializeValue(value: unknown): string {
 }
 
 const parseInput = (text: string): [string, string, OperationType] => {
-    // Check for store operation (<)
-    // ReDoS-safe: find the last /field|file|custom_field/ selector using a simple scan,
-    // then look for the first < in the field-name portion (where < and > are not allowed).
-    // This avoids running a backtracking regex on uncontrolled input.
+    // Scan notation sections before the input value.
     const selectorRe = /\/(?:field|file|custom_field)\//gi
     let lastSelectorEnd = -1
+    let operatorIndex = -1
     let selectorExec: RegExpExecArray | null
     while ((selectorExec = selectorRe.exec(text)) !== null) {
+        if (operatorIndex < 0) {
+            const selectorEnd = selectorExec.index + selectorExec[0].length
+            const opOffset = text.substring(selectorEnd).search(/[<>]/)
+            if (opOffset < 0) break
+            operatorIndex = selectorEnd + opOffset
+        }
+        if (selectorExec.index > operatorIndex) break
         lastSelectorEnd = selectorExec.index + selectorExec[0].length
     }
-    if (lastSelectorEnd >= 0) {
-        const afterSelector = text.substring(lastSelectorEnd)
-        const opOffset = afterSelector.search(/[<>]/)
-        if (opOffset >= 0 && afterSelector[opOffset] === '<') {
-            const notation = text.substring(0, lastSelectorEnd + opOffset).trimEnd()
-            let source = afterSelector.substring(opOffset + 1).trim()
-            source = stripQuotes(source)
-            return [notation, source, OperationType.store]
-        }
+    if (lastSelectorEnd >= 0 && text[operatorIndex] === '<') {
+        const notation = text.substring(0, operatorIndex).trimEnd()
+        const source = stripQuotes(text.substring(operatorIndex + 1).trim())
+        return [notation, source, OperationType.store]
     }
 
     // Check for retrieve operation (>)
@@ -180,11 +183,10 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
     const results: SecretsInput[] = []
 
     for (const input of inputs) {
-        core.debug(`Processing input: [${input}]`)
         const [notation, destinationOrSource, operationType] = parseInput(input)
 
         if (!destinationOrSource && operationType === OperationType.retrieve) {
-            core.error(`Invalid notation: ${input} - missing > operator`)
+            core.error('Invalid notation: missing > operator')
             continue
         }
 
@@ -193,8 +195,8 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
             const parsedNotation = parseNotation(notation)
             uid = parsedNotation[1].text ? parsedNotation[1].text[0] : ''
             selector = parsedNotation[2].text ? parsedNotation[2].text[0] : ''
-        } catch (error) {
-            core.error(`Failed to parse KSM Notation: ${error instanceof Error ? error.message : ''}`)
+        } catch {
+            core.error('Failed to parse KSM notation')
             continue
         }
 
@@ -218,9 +220,7 @@ export const parseSecretsInputs = (inputs: string[]): SecretsInput[] => {
             destinationType = DestinationType.value
         }
 
-        core.debug(
-            `notation=[${notation}], operationType=[${operationType}], destinationType=[${destinationType}], destination=[${operationType === OperationType.store ? '***' : destination}], uid=[${uid}]`
-        )
+        core.debug(`operationType=[${operationType}], destinationType=[${destinationType}]`)
 
         results.push({
             uid,
@@ -319,7 +319,7 @@ export class KsmAction {
             // Get from environment variable
             const envVar = source.slice(4)
             if (process.env[envVar] === undefined) {
-                this.logger.warning(`Environment variable '${envVar}' is not set — value will be empty`)
+                this.logger.warning(`Environment variable '${envVar}' is not set. The value will be empty.`)
             }
             return process.env[envVar] || ''
         } else if (source.startsWith('file:')) {
@@ -732,8 +732,14 @@ export class KsmAction {
 
             const inputs = parseSecretsInputs(this.logger.getMultilineInput('secrets'))
             const maxThrottleWaitSeconds = parseMaxThrottleWaitSeconds(this.logger.getInput('max-throttle-wait-seconds'))
+            let storage: SecretManagerOptions['storage']
+            try {
+                storage = loadJsonConfig(config)
+            } catch {
+                throw new KsmActionError(KsmErrorType.INVALID_CONFIG, 'Keeper configuration is invalid. Check keeper-secret-config.')
+            }
             const options = {
-                storage: loadJsonConfig(config),
+                storage,
                 throttleSleep: buildThrottleSleep(maxThrottleWaitSeconds * 1000)
             }
 

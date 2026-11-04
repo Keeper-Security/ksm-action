@@ -1,0 +1,73 @@
+{
+  "name": "@vercel/ncc",
+  "version": "0.45.0",
+  "repository": "https://github.com/vercel/ncc",
+  "commit": "cb1f1f058bfa7de4cb63f2411e14a724e714e260",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "887b2c1c59d5662c11670d2b744e3c6140b5bd945e7f716e0e669b006239c104"
+    },
+    {
+      "path": "src/@@notfound.js",
+      "sha256": "708f4c4943fef220c159c25f728cc78c0d4754a6354ffd5fe31a33544a2ff7cb"
+    },
+    {
+      "path": "src/cli.js",
+      "sha256": "9004e4d7b9bef8b2022a385178119cf56d117ab1c22a98c5c07510324eb4770b"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "815249d4e12fe41b5953474e641848ac7ffed98d21c3c88c968c788a6222899f"
+    },
+    {
+      "path": "src/loaders/empty-loader.js",
+      "sha256": "51740efd8227dce6cdb30fcfa00c6ddf3fb22f841d55b98481c93ab2dc1448db"
+    },
+    {
+      "path": "src/loaders/notfound-loader.js",
+      "sha256": "51e431c8c9e004c287b4ee263593ab4a6f36ba773ab2e1e7faf2cd5e76960ae1"
+    },
+    {
+      "path": "src/loaders/relocate-loader.js",
+      "sha256": "91fd7aae7b825e09b7ee36d268f4266c48cb933157545a16ba7f316f483fa958"
+    },
+    {
+      "path": "src/loaders/shebang-loader.js",
+      "sha256": "56defe3db8af4fd9dd17a5aa63493f6dfa874d1d07942e006d55bc54b16034e5"
+    },
+    {
+      "path": "src/loaders/stringify-loader.js",
+      "sha256": "009d73ca5a4199b3a29ef5143349c9d73607a5f206eed549f948f390ec3e2983"
+    },
+    {
+      "path": "src/loaders/ts-loader.js",
+      "sha256": "384683ce768aa1037ec9d8f7bd7d74ad3ae1ac17a27c5a49171122a5d91e4831"
+    },
+    {
+      "path": "src/loaders/uncacheable.js",
+      "sha256": "0d38a3fbd63a627ce9a4cb70ab8a1b08e95e42bdf0e6e5ac189ef306501bf202"
+    },
+    {
+      "path": "src/typescript.js",
+      "sha256": "c6bc5fa0f7deaf05913099e3cc21b0769d49ad4c119cf98ec6eaafd8b5bf4a2f"
+    },
+    {
+      "path": "src/utils/get-package-base.js",
+      "sha256": "e8b82e79770e704846a84a592c8d72c5f2fb1208e4c9461d590bec88a5d8aa92"
+    },
+    {
+      "path": "src/utils/has-type-module.js",
+      "sha256": "4aa5e797bf58bc8380c6b5b297443d8917a80a051a1211aeecc0ab6155134661"
+    },
+    {
+      "path": "src/utils/ncc-cache-dir.js",
+      "sha256": "c4890d92d5467b771696564bde163a75567eecdd6de28c73663ed963436e6c49"
+    },
+    {
+      "path": "src/utils/shebang.js",
+      "sha256": "9327980b4ddc50ec144896479897e94b0ee65bac7897cda16752e6298fbae008"
+    }
+  ]
+}

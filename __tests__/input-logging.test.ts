@@ -163,6 +163,21 @@ describe('Input logging', () => {
         expect(inputs[0].operationType).toBe(1)
     })
 
+    test('reports the entry number when a line has no operator', () => {
+        const inputs = parseSecretsInputs([`${RECORD_UID}/field/login > a`, `${RECORD_UID}/field/password > b`, `${RECORD_UID}/field/notes`])
+        expect(inputs).toHaveLength(2)
+        expect(messages).toContain('secrets entry 3: Invalid notation: missing > operator')
+    })
+
+    test('reports the entry number and the reason when a notation is invalid, without the input text', () => {
+        const sentinel = 'SENTINEL-7f3a'
+        const inputs = parseSecretsInputs([`${RECORD_UID}/field/login > a`, `${sentinel}/bogus > OUT`])
+        expect(inputs).toHaveLength(1)
+        const error = messages.find(message => message.startsWith('secrets entry 2:'))
+        expect(error).toContain('bad selector')
+        expect(messages.every(message => !message.includes(sentinel))).toBe(true)
+    })
+
     test('masks a store value before record operations', async () => {
         const events: string[] = []
         const record: KeeperRecord = {

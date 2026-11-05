@@ -194,10 +194,12 @@ const parseInput = (text) => {
 };
 const parseSecretsInputs = (inputs) => {
     const results = [];
-    for (const input of inputs) {
+    for (const [index, input] of inputs.entries()) {
         const [notation, destinationOrSource, operationType] = parseInput(input);
+        // Empty lines are already dropped, so this counts non-empty lines of the secrets input.
+        const entry = `secrets entry ${index + 1}`;
         if (!destinationOrSource && operationType === OperationType.retrieve) {
-            core.error('Invalid notation: missing > operator');
+            core.error(`${entry}: Invalid notation: missing > operator`);
             continue;
         }
         let [uid, selector] = ['', ''];
@@ -206,8 +208,9 @@ const parseSecretsInputs = (inputs) => {
             uid = parsedNotation[1].text ? parsedNotation[1].text[0] : '';
             selector = parsedNotation[2].text ? parsedNotation[2].text[0] : '';
         }
-        catch (_a) {
-            core.error('Failed to parse KSM notation');
+        catch (error) {
+            // parseNotation throws fixed strings and never includes the input. Do not add the input line or notation here.
+            core.error(`${entry}: ${error instanceof Error ? error.message : 'Failed to parse KSM notation'}`);
             continue;
         }
         let destinationType = DestinationType.output;

@@ -163,6 +163,32 @@ describe('Input logging', () => {
         expect(inputs[0].operationType).toBe(1)
     })
 
+    test('reports the entry number when a line has no operator', () => {
+        const inputs = parseSecretsInputs([`${RECORD_UID}/field/login > a`, `${RECORD_UID}/field/password > b`, `${RECORD_UID}/field/notes`])
+        expect(inputs).toHaveLength(2)
+        expect(messages).toContain('secrets entry 3: Invalid notation: missing > operator')
+    })
+
+    test('reports the entry number and the reason when a notation is invalid', () => {
+        const inputs = parseSecretsInputs([`${RECORD_UID}/field/login > a`, `${RECORD_UID}/bogus > OUT`])
+        expect(inputs).toHaveLength(1)
+        const error = messages.find(message => message.startsWith('secrets entry 2:'))
+        expect(error).toContain('bad selector')
+    })
+
+    test.each([
+        `${RECORD_UID}/SENTINEL-7f3a > OUT`,
+        `${RECORD_UID}/notes/SENTINEL-7f3a > OUT`,
+        `${RECORD_UID}/field/login[SENTINEL-7f3a] > OUT`,
+        `${RECORD_UID}/field/SENTINEL\\-7f3a > OUT`,
+        `${Buffer.from('SENTINEL-7f3a/bogus').toString('base64url')} > OUT`,
+        `${RECORD_UID}/field/SENTINEL-7f3a`
+    ])('keeps the input text out of the parse error for line %#', line => {
+        expect(parseSecretsInputs([line])).toHaveLength(0)
+        expect(messages.some(message => message.startsWith('secrets entry 1: '))).toBe(true)
+        expect(messages.every(message => !message.includes('SENTINEL'))).toBe(true)
+    })
+
     test('masks a store value before record operations', async () => {
         const events: string[] = []
         const record: KeeperRecord = {

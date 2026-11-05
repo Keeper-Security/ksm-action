@@ -102,11 +102,11 @@ export function validateFieldValue(fieldType: string, value: string): Validation
         return {valid: false, errors, warnings}
     }
 
-    // Validate based on field type
+    // Validation messages are logged. Never include `value` in them: GitHub masking is the only other protection.
     switch (fieldType) {
         case 'email':
             if (value && !isValidEmail(value)) {
-                errors.push(`Invalid email format: ${value}`)
+                errors.push('Invalid email format')
             }
             break
 
@@ -118,7 +118,7 @@ export function validateFieldValue(fieldType: string, value: string): Validation
 
         case 'checkbox':
             if (value && value !== 'true' && value !== 'false') {
-                errors.push(`Checkbox value must be 'true' or 'false', got: ${value}`)
+                errors.push("Checkbox value must be 'true' or 'false'")
             }
             break
 
@@ -126,7 +126,7 @@ export function validateFieldValue(fieldType: string, value: string): Validation
         case 'birthDate':
         case 'expirationDate':
             if (value && !isValidDate(value)) {
-                errors.push(`Invalid date format. Expected ISO 8601 format, got: ${value}`)
+                errors.push('Invalid date format. Expected ISO 8601 format')
             }
             break
 

@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - The action no longer writes `secrets` input lines to the log. It also no longer writes parts of an invalid `keeper-secret-config` value to the log.
 - Parse errors for the `secrets` input name the entry number and the reason, for example `secrets entry 3: Invalid notation: missing > operator`.
 - Lines whose value or destination contains `/field/`, `/file/`, or `/custom_field/` are parsed correctly.
+- Validation errors for `email`, `checkbox`, and date fields no longer include the value that failed validation.
 
 ## [1.3.3]
 

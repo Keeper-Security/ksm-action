@@ -88,6 +88,13 @@ describe('Shipped bundle smoke test', () => {
         expect(Array.from(fs.readFileSync(path.join(workspace, 'attachment.bin')))).toEqual(ATTACHMENT)
         expect(attachment.calls).toEqual([getSecretsCall, {method: 'downloadFile', argumentCount: 1, fileUid: FILE_UID}])
 
+        if (process.platform !== 'win32') {
+            // The child sets umask 022, so new files get mode 644.
+            for (const file of ['password.txt', 'attachment.bin']) {
+                expect(fs.statSync(path.join(workspace, file)).mode & 0o777).toBe(0o644)
+            }
+        }
+
         expect(store.masked).toContain('synthetic-updated-login')
         expect(store.calls).toHaveLength(2)
         expect(store.calls[0]).toEqual(getSecretsCall)

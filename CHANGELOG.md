@@ -11,7 +11,8 @@ All notable changes to this project will be documented in this file.
 - Updated build, lint, and test dependencies. The build uses the `@vercel/ncc` 0.45.0 source. The action still uses `node24`.
 
 ### Fixed
-- Corrected input logs.
+- The action no longer writes `secrets` input lines to the log. It also no longer writes parts of an invalid `keeper-secret-config` value to the log.
+- Parse errors for the `secrets` input name the entry number and the reason, for example `secrets entry 3: Invalid notation: missing > operator`.
 - Lines whose value or destination contains `/field/`, `/file/`, or `/custom_field/` are parsed correctly.
 
 ## [1.3.3]

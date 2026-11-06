@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Updated `@keeper-security/secrets-manager-core` to 17.6.0 and rebuilt the action.
-- Keeper requests now time out after 30 seconds, and each file download and upload times out after 5 minutes. Earlier versions did not set a time limit. The action has no input to change these limits.
+- Keeper requests, file downloads, and file uploads now time out after 5 minutes. Earlier versions did not set a time limit. The action has no input to change this limit.
 - Keeper requests that are throttled with HTTP 429 are now retried with the SDK backoff. `max-throttle-wait-seconds` still limits each wait.
 - Records in shared folders that earlier versions skipped are now returned. If one of these records has the same title as another record, a title lookup can return a different record than before. Use record UIDs when titles are not unique.
 - Updated build, lint, and test dependencies. The build uses the `@vercel/ncc` 0.45.0 source. The action still uses `node24`.

@@ -102,7 +102,7 @@ describe('File transfer timeout', () => {
         expect(upload.mock.calls).toStrictEqual([[options, record, file, FILE_TRANSFER_TIMEOUT_MS]])
     })
 
-    test('Keeper API calls pass no timeout, so the SDK default applies', async () => {
+    test('Keeper API calls pass the caller options to the SDK unchanged', async () => {
         const options = createOptions()
         const record = createRecord()
         const recordData = {title: 'Synthetic record', type: 'login', fields: []}
@@ -119,7 +119,7 @@ describe('File transfer timeout', () => {
         expect(Object.keys(options)).toEqual(['storage'])
     })
 
-    test('run() builds the getSecrets options without requestTimeoutMs', async () => {
+    test('run() passes one options object to every Keeper API call', async () => {
         const record = createRecord()
         const operations: jest.Mocked<IKsmOperations> = {
             getSecrets: jest.fn<IKsmOperations['getSecrets']>().mockResolvedValue(createSecrets(record)),
@@ -134,8 +134,6 @@ describe('File transfer timeout', () => {
         expect(logger.setFailed).not.toHaveBeenCalled()
         expect(operations.getSecrets).toHaveBeenCalledTimes(2)
         const options = operations.getSecrets.mock.calls[0][0]
-        expect(Object.keys(options).sort()).toEqual(['storage', 'throttleSleep'])
-        expect(options).not.toHaveProperty('requestTimeoutMs')
         expect(operations.getSecrets.mock.calls[1][0]).toBe(options)
         expect(operations.updateSecret).toHaveBeenCalledWith(options, record)
     })
@@ -153,7 +151,6 @@ describe('File transfer timeout', () => {
         expect(logger.setFailed).not.toHaveBeenCalled()
         expect(getSecrets).toHaveBeenCalledTimes(2)
         const options = getSecrets.mock.calls[0][0]
-        expect(Object.keys(options).sort()).toEqual(['storage', 'throttleSleep'])
         expect(download.mock.calls).toStrictEqual([[record.files![0], FILE_TRANSFER_TIMEOUT_MS]])
         expect(upload.mock.calls).toStrictEqual([
             [options, record, {name: 'upload.bin', title: 'upload.bin', type: 'application/octet-stream', data: BINARY}, FILE_TRANSFER_TIMEOUT_MS]

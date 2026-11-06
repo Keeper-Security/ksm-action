@@ -110,11 +110,8 @@ const parseMaxThrottleWaitSeconds = (rawInput) => {
     }
     return seconds;
 };
-// secrets-manager-core 17.6.0 puts a fixed 30 second deadline on each request, response body included.
-// Earlier versions had no deadline, so API calls and file transfers both get an explicit 5 minute limit.
-// Do not remove either constant to fall back to the SDK default: large vault fetches and slow transfers would start failing.
-// The API limit travels in the SDK options and the file limit is passed per call, so changing one does not change the other.
-const API_REQUEST_TIMEOUT_MS = 300000;
+// The SDK applies a fixed 30 second limit to each request, including the whole request or response body.
+// File downloads and uploads get a longer limit. Keeper API calls keep the SDK default.
 const FILE_TRANSFER_TIMEOUT_MS = 300000;
 // Production implementation
 class KsmOperations {
@@ -705,8 +702,7 @@ class KsmAction {
                 }
                 const options = {
                     storage,
-                    throttleSleep: (0, exports.buildThrottleSleep)(maxThrottleWaitSeconds * 1000),
-                    requestTimeoutMs: API_REQUEST_TIMEOUT_MS
+                    throttleSleep: (0, exports.buildThrottleSleep)(maxThrottleWaitSeconds * 1000)
                 };
                 // Separate operations by type
                 const retrieveOps = inputs.filter(i => i.operationType === OperationType.retrieve);

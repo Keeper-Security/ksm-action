@@ -30,7 +30,7 @@ type SmokeResult = {
     blocked: string[]
 }
 
-const getSecretsCall = {method: 'getSecrets', filter: [RECORD_UID], optionKeys: ['requestTimeoutMs', 'storage', 'throttleSleep'], hostname: 'invalid.example'}
+const getSecretsCall = {method: 'getSecrets', filter: [RECORD_UID], optionKeys: ['storage', 'throttleSleep'], hostname: 'invalid.example'}
 
 describe('Shipped bundle smoke test', () => {
     let workspace: string
@@ -98,7 +98,7 @@ describe('Shipped bundle smoke test', () => {
         expect(store.masked).toContain('synthetic-updated-login')
         expect(store.calls).toHaveLength(2)
         expect(store.calls[0]).toEqual(getSecretsCall)
-        expect(store.calls[1]).toMatchObject({method: 'updateSecret', optionKeys: ['requestTimeoutMs', 'storage', 'throttleSleep']})
+        expect(store.calls[1]).toMatchObject({method: 'updateSecret', optionKeys: ['storage', 'throttleSleep']})
         expect(store.calls[1].record).toMatchObject({
             recordUid: RECORD_UID,
             data: {

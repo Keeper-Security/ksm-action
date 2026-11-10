@@ -66,7 +66,8 @@ describe('Shipped bundle smoke test', () => {
             'default',
             'getRecordUids',
             'parseSecretsInputs',
-            'serializeValue'
+            'serializeValue',
+            'unknownOutcomeCause'
         ])
         expect(result.blocked).toEqual([])
         for (const [name, scenario] of Object.entries(result.scenarios)) {

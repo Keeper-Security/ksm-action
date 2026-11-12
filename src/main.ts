@@ -36,7 +36,8 @@ export enum KsmErrorType {
     FIELD_NOT_FOUND = 'FIELD_NOT_FOUND',
     NETWORK_ERROR = 'NETWORK_ERROR',
     INVALID_CONFIG = 'INVALID_CONFIG',
-    THROTTLE_EXCEEDED = 'THROTTLE_EXCEEDED'
+    THROTTLE_EXCEEDED = 'THROTTLE_EXCEEDED',
+    OUTCOME_UNKNOWN = 'OUTCOME_UNKNOWN'
 }
 
 export class KsmActionError extends Error {
@@ -52,6 +53,101 @@ export class KsmActionError extends Error {
         this.retryable = (details as {retryable?: boolean})?.retryable === true
     }
 }
+
+const RECORD_UID_PATTERN = /^[A-Za-z0-9_-]{22}$/
+
+// Socket error codes that Node reports when the connection closes during the exchange with Keeper.
+const CONNECTION_RESET_CODES = new Set(['ECONNRESET', 'EPIPE'])
+
+// Node uses this text when the socket closes before the TLS connection opens. The request has not left the client in that case.
+const TLS_NOT_ESTABLISHED = 'before secure TLS connection was established'
+
+// The SDK reports a timeout as a KeeperError that has no timeout class and no outcome field.
+// It reports gateway pages and server error bodies as plain errors whose message is the raw text.
+// So the action recognizes a failed write that can follow a commit on the Keeper server by the message or the error code.
+// Only a timeout names its request. A timed out read request, such as the read that the SDK makes before a create, says nothing about the write.
+// A reset or an error page during that read is reported too, because the error does not name the request. The report says "may".
+// The result is a short sentence for the log, or undefined when the error matches none of these cases.
+// Exported for tests.
+export const unknownOutcomeCause = (error: unknown): string | undefined => {
+    const rawMessage = (error as Error)?.message
+    const message = typeof rawMessage === 'string' ? rawMessage : ''
+
+    const timeout = /Request to (\S+) timed out after (\d+)ms/.exec(message)
+    if (timeout) {
+        return /\/sm\/v1\/get_(secret|folders)$/.test(timeout[1]) ? undefined : `The request timed out after ${timeout[2]}ms.`
+    }
+
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (typeof code === 'string' && CONNECTION_RESET_CODES.has(code) && !message.includes(TLS_NOT_ESTABLISHED)) {
+        return 'The connection closed before the action received a reply.'
+    }
+
+    const gateway = /<title>\s*(502|504)\b/i.exec(message) || /unknown ksm error, code (502|504)\b/.exec(message)
+    if (gateway) {
+        return `Keeper replied with HTTP ${gateway[1]}.`
+    }
+
+    if (message.startsWith('{')) {
+        try {
+            if ((JSON.parse(message) as {error?: unknown}).error === 'unknown') {
+                return 'Keeper replied with an unknown server error.'
+            }
+        } catch {
+            // Not JSON, so the message holds no server error code
+        }
+    }
+
+    return undefined
+}
+
+type OutcomeContext = {recordUid?: string; title?: string; folderUid?: string}
+
+// A log line must not carry control characters, C1 control characters, or the bidirectional overrides.
+const isPrintable = (codePoint: number): boolean =>
+    codePoint > 31 && !(codePoint >= 127 && codePoint <= 159) && !(codePoint >= 0x202a && codePoint <= 0x202e) && !(codePoint >= 0x2066 && codePoint <= 0x2069)
+
+// Keeps text that the user supplied on one log line: unsafe characters become spaces, cut at 80 characters, in quotes.
+const quoteForLog = (value: string): string => {
+    const printable = Array.from(value)
+        .map(character => {
+            if (character === '"') return "'"
+            return isPrintable(character.codePointAt(0) ?? 0) ? character : ' '
+        })
+        .slice(0, 80)
+        .join('')
+    return `"${printable}"`
+}
+
+const validUid = (value: string | undefined): string | undefined => (value && RECORD_UID_PATTERN.test(value) ? value : undefined)
+
+const NEXT_STEP = 'before you run this job again.'
+
+const updateOutcomeMessage = (cause: string, context: OutcomeContext): string => {
+    const recordUid = validUid(context.recordUid)
+    const record = recordUid ? `record ${recordUid}` : 'the record'
+    return `Outcome unknown for update of ${record}. ${cause} Keeper may have applied the change. The action does not retry after this error. Wait a short time, then read the record in the vault ${NEXT_STEP}`
+}
+
+const createOutcomeMessage = (cause: string, context: OutcomeContext): string => {
+    const folderUid = validUid(context.folderUid)
+    const target = context.title ? `record ${quoteForLog(context.title)}` : 'a record'
+    const place = folderUid ? ` in folder ${folderUid}` : ''
+    return `Outcome unknown for create of ${target}${place}. ${cause} Keeper may have created the record. A second run can create a second record. Wait a short time, then search the folder for the title ${NEXT_STEP}`
+}
+
+const uploadOutcomeMessage = (cause: string, context: OutcomeContext): string => {
+    const recordUid = validUid(context.recordUid)
+    const record = recordUid ? `record ${recordUid}` : 'the record'
+    return `Outcome unknown for file upload to ${record}. ${cause} Keeper may have added a file entry. The entry may have no content. The action stops after a failed upload. It does not apply later changes for this record. Wait a short time, then check the record in the vault ${NEXT_STEP}`
+}
+
+// The key is the operation name that handleKsmError receives. A read, such as 'retrieve', has no entry.
+const OUTCOME_UNKNOWN_MESSAGES = new Map<string, (cause: string, context: OutcomeContext) => string>([
+    ['update', updateOutcomeMessage],
+    ['create', createOutcomeMessage],
+    ['upload file to', uploadOutcomeMessage]
+])
 
 // secrets-manager-core 17.6.0 caps a server-supplied throttle wait at 176 seconds, plus up to 25% jitter.
 // The action's own cap still fails fast instead of blocking for that long.
@@ -245,7 +341,7 @@ export const getRecordUids = (inputs: SecretsInput[]): string[] => {
     return Array.from(set)
 }
 
-const handleKsmError = (error: unknown, operation: string, notation: string, logger: typeof core = core): void => {
+const handleKsmError = (error: unknown, operation: string, notation: string, logger: typeof core = core, context: OutcomeContext = {}): void => {
     const errorMessage = (error as Error)?.message || String(error) || 'Unknown error'
 
     // Try to parse JSON error responses from KSM API
@@ -294,6 +390,14 @@ const handleKsmError = (error: unknown, operation: string, notation: string, log
         logger.error(`   The record or field you're trying to update doesn't exist.`)
 
         throw new KsmActionError(KsmErrorType.RECORD_NOT_FOUND, `Record or field not found: ${notation}`, {originalError: errorMessage})
+    }
+
+    // A write that lost its reply may still have been applied by Keeper
+    const describeOutcome = OUTCOME_UNKNOWN_MESSAGES.get(operation)
+    const unknownCause = describeOutcome ? unknownOutcomeCause(error) : undefined
+    if (describeOutcome && unknownCause) {
+        logger.error(`❌ Failed to ${operation} ${notation}: ${errorMessage}`)
+        throw new KsmActionError(KsmErrorType.OUTCOME_UNKNOWN, describeOutcome(unknownCause, context), {originalError: errorMessage})
     }
 
     // Generic error
@@ -520,7 +624,7 @@ export class KsmAction {
                 )
             }
         } catch (error) {
-            handleKsmError(error, 'upload file to', record.recordUid || 'record', this.logger)
+            handleKsmError(error, 'upload file to', record.recordUid || 'record', this.logger, {recordUid: record.recordUid})
             throw error
         }
     }
@@ -631,9 +735,9 @@ export class KsmAction {
                     return this.storeFieldsForRecord(options, ops, retryCount + 1)
                 }
 
+                // The restore covers only the copy of the record in memory. Do not log it as a revert: Keeper may have applied the update.
                 restoreRecordFromBackup(record, backup)
-                this.logger.error(`Failed to update record, changes reverted`)
-                handleKsmError(error, 'update', ops[0].notation, this.logger)
+                handleKsmError(error, 'update', ops[0].notation, this.logger, {recordUid: record.recordUid})
                 throw error
             }
         } catch (error) {
@@ -674,7 +778,7 @@ export class KsmAction {
             const recordUid = await this.ksmOps.createSecret(options, folderUid, newRecord)
             this.logger.info(`✅ Created new record: ${input.uid} (UID: ${recordUid})`)
         } catch (error) {
-            handleKsmError(error, 'create', input.notation, this.logger)
+            handleKsmError(error, 'create', input.notation, this.logger, {title: input.uid, folderUid})
             throw error
         }
     }
@@ -805,7 +909,11 @@ export class KsmAction {
                 // Report results
                 const failures = results.filter(r => r.status === 'rejected')
                 if (failures.length > 0) {
-                    this.logger.error(`❌ ${failures.length} store operation(s) failed`)
+                    const unknownOutcomes = failures.filter(
+                        failure => failure.status === 'rejected' && failure.reason instanceof KsmActionError && failure.reason.type === KsmErrorType.OUTCOME_UNKNOWN
+                    ).length
+                    const failureSummary = `${failures.length} store operation(s) failed${unknownOutcomes > 0 ? ` (${unknownOutcomes} with unknown outcome)` : ''}`
+                    this.logger.error(`❌ ${failureSummary}`)
 
                     for (const [index, failure] of failures.entries()) {
                         if (failure.status === 'rejected') {
@@ -823,7 +931,7 @@ export class KsmAction {
                     }
 
                     if (this.logger.getBooleanInput('fail-on-store-error')) {
-                        this.logger.setFailed(`${failures.length} store operation(s) failed`)
+                        this.logger.setFailed(failureSummary)
                     }
                 } else {
                     this.logger.info(`✅ All store operations completed successfully`)

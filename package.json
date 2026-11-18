@@ -35,7 +35,7 @@
     "deepmerge": "file:tools/dependency-compat/deepmerge",
     "eslint": "^8.57.0",
     "eslint-plugin-github": "^6.1.2",
-    "eslint-plugin-jest": "^29.17.0",
+    "eslint-plugin-jest": "^29.17.1",
     "globals": "^17.7.0",
     "jest": "^30.5.0",
     "minimatch": "file:tools/dependency-compat/minimatch",

@@ -1,0 +1,15 @@
+{
+  "name": "@keeper-security/deepmerge-compat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Keep the default deepmerge interface for development tools.",
+  "license": "MIT",
+  "main": "index.cjs",
+  "exports": {
+    ".": "./index.cjs",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@fastify/deepmerge": "3.2.4"
+  }
+}

@@ -56,7 +56,7 @@ describe('Safeguards', () => {
 
             const invalid = validateFieldValue('email', 'not-an-email')
             expect(invalid.valid).toBe(false)
-            expect(invalid.errors).toContain('Invalid email format: not-an-email')
+            expect(invalid.errors).toContain('Invalid email format')
         })
 
         it('should validate URL fields', () => {
@@ -92,7 +92,18 @@ describe('Safeguards', () => {
 
             const invalid = validateFieldValue('checkbox', 'yes')
             expect(invalid.valid).toBe(false)
-            expect(invalid.errors).toContain("Checkbox value must be 'true' or 'false', got: yes")
+            expect(invalid.errors).toContain("Checkbox value must be 'true' or 'false'")
+        })
+
+        // The message goes to the log, so GitHub's masking is the only thing keeping the value out of it.
+        it.each(['email', 'checkbox', 'date', 'birthDate', 'expirationDate'])('does not echo the rejected value in the %s error', fieldType => {
+            const sentinel = 'SENTINEL-7f3a'
+            const result = validateFieldValue(fieldType, sentinel)
+            expect(result.valid).toBe(false)
+            expect(result.errors.length).toBeGreaterThan(0)
+            for (const error of result.errors) {
+                expect(error).not.toContain(sentinel)
+            }
         })
 
         it('should validate date fields', () => {

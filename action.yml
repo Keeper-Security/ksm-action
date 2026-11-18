@@ -28,7 +28,7 @@ inputs:
     required: false
     default: 'false'
   max-throttle-wait-seconds:
-    description: 'Maximum seconds to wait for a single Keeper backend throttle retry before failing fast instead of blocking. Raise this to allow the SDK''s full backoff schedule (up to ~176s per attempt) to run.'
+    description: 'Maximum seconds to wait for a single Keeper backend throttle retry before failing fast instead of blocking. One SDK backoff wait can reach about 220 seconds. Raise this value to allow the full SDK backoff.'
     required: false
     default: '60'
 runs:
